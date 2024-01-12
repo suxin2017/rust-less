@@ -10,12 +10,14 @@ use crate::parser::ParserOptions;
 use crate::printer::Printer;
 use crate::properties::custom::{CustomProperty, UnparsedProperty};
 use crate::properties::Property;
+use crate::rules::variable::VariableDefined;
 use crate::targets::Targets;
 use crate::traits::{Parse, ToCss};
 use crate::values::color::ColorFallbackKind;
 use crate::values::ident::CustomIdent;
 use crate::values::percentage::Percentage;
 use crate::values::string::CowArcStr;
+use crate::variable_defined_parser::parse_variable_defined;
 use crate::vendor_prefix::VendorPrefix;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
@@ -44,6 +46,9 @@ pub struct KeyframesRule<'i> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 /// KeyframesName
@@ -177,6 +182,8 @@ impl<'i> KeyframesRule<'i> {
         selectors: keyframe.selectors.clone(),
         declarations: DeclarationBlock {
           important_declarations: vec![],
+          // TODO: 这个应该从keyframe中取
+          variables: vec![],
           declarations: keyframe
             .declarations
             .declarations
@@ -202,9 +209,12 @@ impl<'i> KeyframesRule<'i> {
       rules: CssRuleList(vec![CssRule::Keyframes(KeyframesRule {
         name: self.name.clone(),
         keyframes,
+        // TODO: 这里不应该用克隆
+        variables: self.variables.clone(),
         vendor_prefix: self.vendor_prefix,
         loc: self.loc.clone(),
       })]),
+      variables: vec![],
       loc: self.loc.clone(),
     })
   }
@@ -359,17 +369,20 @@ impl<'i> ToCss for Keyframe<'i> {
   }
 }
 
-pub(crate) struct KeyframeListParser;
+pub(crate) struct KeyframeListParser<'a, 'i, 'o> {
+  pub(crate) variables: &'a mut Vec<VariableDefined<'i>>,
+  pub(crate) options: &'a ParserOptions<'o, 'i>,
+}
 
-impl<'a, 'i> AtRuleParser<'i> for KeyframeListParser {
+impl<'a, 'i, 'o> AtRuleParser<'i> for KeyframeListParser<'a, 'i, 'o> {
   type Prelude = ();
-  type AtRule = Keyframe<'i>;
+  type AtRule = Option<Keyframe<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'a, 'i> QualifiedRuleParser<'i> for KeyframeListParser {
+impl<'a, 'i, 'o> QualifiedRuleParser<'i> for KeyframeListParser<'a, 'i, 'o> {
   type Prelude = Vec<KeyframeSelector>;
-  type QualifiedRule = Keyframe<'i>;
+  type QualifiedRule = Option<Keyframe<'i>>;
   type Error = ParserError<'i>;
 
   fn parse_prelude<'t>(
@@ -387,19 +400,33 @@ impl<'a, 'i> QualifiedRuleParser<'i> for KeyframeListParser {
   ) -> Result<Self::QualifiedRule, ParseError<'i, ParserError<'i>>> {
     // For now there are no options that apply within @keyframes
     let options = ParserOptions::default();
-    Ok(Keyframe {
+    Ok(Some(Keyframe {
       selectors,
       declarations: DeclarationBlock::parse(input, &options)?,
-    })
+    }))
   }
 }
 
-impl<'i> DeclarationParser<'i> for KeyframeListParser {
-  type Declaration = Keyframe<'i>;
+impl<'a, 'i, 'o> DeclarationParser<'i> for KeyframeListParser<'a, 'i, 'o> {
+  type Declaration = Option<Keyframe<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'i> RuleBodyItemParser<'i, Keyframe<'i>, ParserError<'i>> for KeyframeListParser {
+impl<'a, 'i, 'o> VariableDefineParser<'i> for KeyframeListParser<'a, 'i, 'o> {
+  type Error = ParserError<'i>;
+  type Value = Option<Keyframe<'i>>;
+  fn parse_value_defined<'t>(
+    &mut self,
+    start: &ParserState,
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, 't>,
+  ) -> Result<Self::Value, ParseError<'i, Self::Error>> {
+    self.variables.push(parse_variable_defined(name, input, self.options)?);
+    Ok(None)
+  }
+}
+
+impl<'a, 'i, 'o> RuleBodyItemParser<'i, Option<Keyframe<'i>>, ParserError<'i>> for KeyframeListParser<'a, 'i, 'o> {
   fn parse_qualified(&self) -> bool {
     true
   }

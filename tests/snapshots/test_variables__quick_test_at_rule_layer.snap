@@ -1,0 +1,50 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: layer-block
+    value:
+      name: ~
+      rules: []
+      loc:
+        source_index: 0
+        line: 1
+        column: 1
+      variables:
+        - name: a
+          value:
+            - type: token
+              value:
+                type: number
+                value: 123
+          loc:
+            source_index: 0
+            line: 2
+            column: 1
+  - type: layer-block
+    value:
+      name: ~
+      rules: []
+      loc:
+        source_index: 0
+        line: 4
+        column: 1
+      variables:
+        - name: a
+          value:
+            - type: token
+              value:
+                type: number
+                value: 123
+          loc:
+            source_index: 0
+            line: 5
+            column: 1
+variables: []
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

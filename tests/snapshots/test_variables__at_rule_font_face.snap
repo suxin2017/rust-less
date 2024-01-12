@@ -1,0 +1,57 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: font-face
+    value:
+      properties:
+        - type: font-family
+          value: MyHelvetica
+        - type: source
+          value:
+            - type: local
+              value: Helvetica Neue Bold
+            - type: local
+              value: HelveticaNeue-Bold
+            - type: url
+              value:
+                url:
+                  url: MgOpenModernaBold.ttf
+                  loc:
+                    line: 7
+                    column: 5
+                format: ~
+                tech: []
+        - type: font-weight
+          value:
+            - type: absolute
+              value:
+                type: bold
+            - type: absolute
+              value:
+                type: bold
+      loc:
+        source_index: 0
+        line: 2
+        column: 1
+      variables:
+        - name: b
+          value:
+            - type: token
+              value:
+                type: number
+                value: 456
+variables:
+  - name: a
+    value:
+      - type: token
+        value:
+          type: number
+          value: 123
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

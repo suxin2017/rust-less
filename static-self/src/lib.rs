@@ -1,14 +1,18 @@
+extern crate core;
+
+use core::hash::Hash;
+use std::collections::HashMap;
 pub use static_self_derive::IntoOwned;
 
 /// A trait for things that can be cloned with a new lifetime.
 ///
 /// `'any` lifeitme means the output should have `'static` lifetime.
 pub trait IntoOwned<'any> {
-  /// A variant of `Self` with a new lifetime.
-  type Owned: 'any;
+    /// A variant of `Self` with a new lifetime.
+    type Owned: 'any;
 
-  /// Make lifetime of `self` `'static`.
-  fn into_owned(self) -> Self::Owned;
+    /// Make lifetime of `self` `'static`.
+    fn into_owned(self) -> Self::Owned;
 }
 
 macro_rules! impl_into_owned {
@@ -66,74 +70,87 @@ macro_rules! call_impl_tuple {
 call_impl_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);
 
 impl<'any, T> IntoOwned<'any> for Vec<T>
-where
-  T: IntoOwned<'any>,
+    where
+        T: IntoOwned<'any>,
 {
-  type Owned = Vec<<T as IntoOwned<'any>>::Owned>;
+    type Owned = Vec<<T as IntoOwned<'any>>::Owned>;
 
-  fn into_owned(self) -> Self::Owned {
-    self.into_iter().map(|v| v.into_owned()).collect()
-  }
+    fn into_owned(self) -> Self::Owned {
+        self.into_iter().map(|v| v.into_owned()).collect()
+    }
 }
-impl<'any, T> IntoOwned<'any> for Option<T>
-where
-  T: IntoOwned<'any>,
-{
-  type Owned = Option<<T as IntoOwned<'any>>::Owned>;
 
-  fn into_owned(self) -> Self::Owned {
-    self.map(|v| v.into_owned())
-  }
+impl<'any, T> IntoOwned<'any> for Option<T>
+    where
+        T: IntoOwned<'any>,
+{
+    type Owned = Option<<T as IntoOwned<'any>>::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        self.map(|v| v.into_owned())
+    }
+}
+
+impl<'any, K, V> IntoOwned<'any> for HashMap<K, V>
+    where
+        V: IntoOwned<'any> + 'any,
+        K: IntoOwned<'any> + Eq + Hash + 'any
+{
+    type Owned = Self;
+
+    fn into_owned(self) -> Self::Owned {
+        self
+    }
 }
 
 impl<'any, T> IntoOwned<'any> for Box<T>
-where
-  T: IntoOwned<'any>,
+    where
+        T: IntoOwned<'any>,
 {
-  type Owned = Box<<T as IntoOwned<'any>>::Owned>;
+    type Owned = Box<<T as IntoOwned<'any>>::Owned>;
 
-  fn into_owned(self) -> Self::Owned {
-    Box::new((*self).into_owned())
-  }
+    fn into_owned(self) -> Self::Owned {
+        Box::new((*self).into_owned())
+    }
 }
 
 impl<'any, T> IntoOwned<'any> for Box<[T]>
-where
-  T: IntoOwned<'any>,
+    where
+        T: IntoOwned<'any>,
 {
-  type Owned = Box<[<T as IntoOwned<'any>>::Owned]>;
+    type Owned = Box<[<T as IntoOwned<'any>>::Owned]>;
 
-  fn into_owned(self) -> Self::Owned {
-    self.into_vec().into_owned().into_boxed_slice()
-  }
+    fn into_owned(self) -> Self::Owned {
+        self.into_vec().into_owned().into_boxed_slice()
+    }
 }
 
 #[cfg(feature = "smallvec")]
 impl<'any, T, const N: usize> IntoOwned<'any> for smallvec::SmallVec<[T; N]>
-where
-  T: IntoOwned<'any>,
-  [T; N]: smallvec::Array<Item = T>,
-  [<T as IntoOwned<'any>>::Owned; N]: smallvec::Array<Item = <T as IntoOwned<'any>>::Owned>,
+    where
+        T: IntoOwned<'any>,
+        [T; N]: smallvec::Array<Item=T>,
+        [<T as IntoOwned<'any>>::Owned; N]: smallvec::Array<Item=<T as IntoOwned<'any>>::Owned>,
 {
-  type Owned = smallvec::SmallVec<[<T as IntoOwned<'any>>::Owned; N]>;
+    type Owned = smallvec::SmallVec<[<T as IntoOwned<'any>>::Owned; N]>;
 
-  fn into_owned(self) -> Self::Owned {
-    self.into_iter().map(|v| v.into_owned()).collect()
-  }
+    fn into_owned(self) -> Self::Owned {
+        self.into_iter().map(|v| v.into_owned()).collect()
+    }
 }
 
 impl<'any, T, const N: usize> IntoOwned<'any> for [T; N]
-where
-  T: IntoOwned<'any>,
+    where
+        T: IntoOwned<'any>,
 {
-  type Owned = [<T as IntoOwned<'any>>::Owned; N];
+    type Owned = [<T as IntoOwned<'any>>::Owned; N];
 
-  fn into_owned(self) -> Self::Owned {
-    self
-      .into_iter()
-      .map(|v| v.into_owned())
-      .collect::<Vec<_>>()
-      .try_into()
-      .unwrap_or_else(|_| unreachable!("Vec<T> with N elements should be able to be converted to [T; N]"))
-  }
+    fn into_owned(self) -> Self::Owned {
+        self
+            .into_iter()
+            .map(|v| v.into_owned())
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("Vec<T> with N elements should be able to be converted to [T; N]"))
+    }
 }

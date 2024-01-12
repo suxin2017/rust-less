@@ -55,11 +55,13 @@ pub mod starting_style;
 pub mod style;
 pub mod supports;
 pub mod unknown;
+pub mod variable;
 pub mod viewport;
 
 use self::font_palette_values::FontPaletteValuesRule;
 use self::layer::{LayerBlockRule, LayerStatementRule};
 use self::property::PropertyRule;
+use self::variable::VariableDefined;
 use crate::context::PropertyHandlerContext;
 use crate::declaration::{DeclarationBlock, DeclarationHandler};
 use crate::dependencies::{Dependency, ImportDependency};
@@ -67,6 +69,7 @@ use crate::error::{MinifyError, ParserError, PrinterError, PrinterErrorKind};
 use crate::parser::{parse_rule_list, parse_style_block, DefaultAtRule, DefaultAtRuleParser, TopLevelRuleParser};
 use crate::prefixes::Feature;
 use crate::printer::Printer;
+use crate::properties::custom::TokenList;
 use crate::rules::keyframes::KeyframesName;
 use crate::selector::{is_compatible, is_equivalent, Component, Selector, SelectorList};
 use crate::stylesheet::ParserOptions;
@@ -78,7 +81,7 @@ use crate::vendor_prefix::VendorPrefix;
 use crate::visitor::{Visit, VisitTypes, Visitor};
 use container::ContainerRule;
 use counter_style::CounterStyleRule;
-use cssparser::{parse_one_rule, ParseError, Parser, ParserInput};
+use cssparser::{parse_one_rule, CowRcStr, ParseError, Parser, ParserInput};
 use custom_media::CustomMediaRule;
 use document::MozDocumentRule;
 use font_face::FontFaceRule;
@@ -99,10 +102,12 @@ use supports::SupportsRule;
 use unknown::UnknownAtRule;
 use viewport::ViewportRule;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct StyleContext<'a, 'i> {
-  pub selectors: &'a SelectorList<'i>,
+  pub selectors: Option<&'a SelectorList<'i>>,
+  // pub symbol_table: Option<HashMap<CowArcStr<'i>,TokenList<'i>>>,
   pub parent: Option<&'a StyleContext<'a, 'i>>,
+  pub variables: Option<&'a Vec<VariableDefined<'i>>>,
 }
 
 /// A source location.
@@ -180,6 +185,8 @@ pub enum CssRule<'i, R = DefaultAtRule> {
   Unknown(UnknownAtRule<'i>),
   /// A custom at-rule.
   Custom(R),
+  /// css variable
+  Variable(VariableDefined<'i>),
 }
 
 // Manually implemented deserialize to reduce binary size.
@@ -363,6 +370,7 @@ impl<'a, 'i, T: ToCss> ToCss for CssRule<'i, T> {
         kind: PrinterErrorKind::FmtError,
         loc: None,
       }),
+      CssRule::Variable(variable) => variable.to_css(dest),
       CssRule::Ignored => Ok(()),
     }
   }
@@ -394,7 +402,8 @@ impl<'i, T> CssRule<'i, T> {
     at_rule_parser: &mut P,
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
     let mut rules = CssRuleList(Vec::new());
-    parse_one_rule(input, &mut TopLevelRuleParser::new(options, at_rule_parser, &mut rules))?;
+    let mut variable = vec![];
+    parse_one_rule(input, &mut TopLevelRuleParser::new(options, at_rule_parser, &mut rules,&mut variable))?;
     Ok(rules.0.pop().unwrap())
   }
 
@@ -434,7 +443,7 @@ impl<'i> CssRuleList<'i, DefaultAtRule> {
     input: &mut Parser<'i, 't>,
     options: &ParserOptions<'_, 'i>,
     is_nested: bool,
-  ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+  ) -> Result<(Self,Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
     Self::parse_style_block_with(input, options, &mut DefaultAtRuleParser, is_nested)
   }
 }
@@ -456,7 +465,7 @@ impl<'i, T> CssRuleList<'i, T> {
     options: &ParserOptions<'_, 'i>,
     at_rule_parser: &mut P,
     is_nested: bool,
-  ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+  ) -> Result<(Self,Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
     parse_style_block(input, options, at_rule_parser, is_nested)
   }
 }
@@ -706,6 +715,7 @@ impl<'i, T: Clone> CssRuleList<'i, T> {
             Some(StyleRule {
               selectors: style.selectors.clone(),
               declarations: DeclarationBlock::default(),
+              variables: style.variables.clone(),
               rules,
               vendor_prefix: style.vendor_prefix,
               loc: style.loc,
@@ -913,6 +923,7 @@ impl<'a, 'i, T: ToCss> ToCss for CssRuleList<'i, T> {
         }
         dest.newline()?;
       }
+
       rule.to_css(dest)?;
       last_without_block = matches!(
         rule,

@@ -5,7 +5,7 @@ members = [
   "c",
   "derive",
   "static-self",
-  "static-self-derive"
+  "static-self-derive",
 ]
 
 [package]
@@ -15,7 +15,7 @@ version = "1.0.0-alpha.51"
 description = "A CSS parser, transformer, and minifier"
 license = "MPL-2.0"
 edition = "2021"
-keywords = [ "CSS", "minifier", "Parcel" ]
+keywords = ["CSS", "minifier", "Parcel"]
 repository = "https://github.com/parcel-bundler/lightningcss"
 
 [package.metadata.docs.rs]
@@ -33,7 +33,7 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [features]
-default = ["bundler", "grid", "nodejs", "sourcemap"]
+default = ["bundler", "grid", "nodejs", "sourcemap","serde"]
 browserslist = ["browserslist-rs"]
 bundler = ["dashmap", "sourcemap", "rayon"]
 cli = ["atty", "clap", "serde_json", "browserslist", "jemallocator"]
@@ -48,8 +48,8 @@ substitute_variables = ["visitor", "into_owned"]
 
 [dependencies]
 serde = { version = "1.0.123", features = ["derive"], optional = true }
-cssparser = "0.33.0"
-cssparser-color = "0.1.0"
+cssparser = { path = "./rust-cssparser" }
+cssparser-color = { path = "./rust-cssparser/color" }
 parcel_selectors = { version = "0.26.4", path = "./selectors" }
 itertools = "0.10.1"
 smallvec = { version = "1.7.0", features = ["union"] }
@@ -73,7 +73,9 @@ schemars = { version = "0.8.11", features = ["smallvec"], optional = true }
 static-self = { version = "0.1.0", path = "static-self", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-jemallocator = { version = "0.3.2", features = ["disable_initial_exec_tls"], optional = true }
+jemallocator = { version = "0.3.2", features = [
+  "disable_initial_exec_tls",
+], optional = true }
 
 [dev-dependencies]
 indoc = "1.0.3"
@@ -81,6 +83,8 @@ assert_cmd = "2.0"
 assert_fs = "1.0"
 predicates = "2.1"
 serde_json = "1"
+insta = { version = "1.34.0", features = ["yaml"] }
+
 
 [[test]]
 name = "cli_integration_tests"
@@ -99,3 +103,7 @@ required-features = ["serde"]
 lto = true
 codegen-units = 1
 panic = 'abort'
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3

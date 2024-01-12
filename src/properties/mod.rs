@@ -88,7 +88,7 @@
 //! [UnparsedProperty](custom::UnparsedProperty) struct, and the `Property::Unparsed` variant. The value is stored
 //! as a raw [TokenList](custom::TokenList), with a [PropertyId](PropertyId) as the name.
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 
 pub mod align;
 pub mod animation;

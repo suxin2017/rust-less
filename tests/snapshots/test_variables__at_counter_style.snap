@@ -1,0 +1,59 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: counter-style
+    value:
+      name: thumbs
+      declarations:
+        importantDeclarations: []
+        declarations:
+          - property: custom
+            value:
+              name: system
+              value:
+                - type: token
+                  value:
+                    type: ident
+                    value: cyclic
+          - property: custom
+            value:
+              name: symbols
+              value:
+                - type: token
+                  value:
+                    type: string
+                    value: 👍
+          - property: custom
+            value:
+              name: suffix
+              value:
+                - type: token
+                  value:
+                    type: string
+                    value: " "
+        variables:
+          - name: b
+            value:
+              - type: token
+                value:
+                  type: number
+                  value: 456
+      loc:
+        source_index: 0
+        line: 2
+        column: 1
+variables:
+  - name: a
+    value:
+      - type: token
+        value:
+          type: number
+          value: 123
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

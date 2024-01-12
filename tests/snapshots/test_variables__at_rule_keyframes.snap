@@ -1,0 +1,68 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: keyframes
+    value:
+      name:
+        type: ident
+        value: slidein
+      keyframes:
+        - selectors:
+            - type: from
+          declarations:
+            importantDeclarations: []
+            declarations:
+              - property: transform
+                vendorPrefix: []
+                value:
+                  - type: translateX
+                    value:
+                      type: percentage
+                      value: 0
+            variables:
+              - name: c
+                value:
+                  - type: token
+                    value:
+                      type: number
+                      value: 789
+        - selectors:
+            - type: to
+          declarations:
+            importantDeclarations: []
+            declarations:
+              - property: transform
+                vendorPrefix: []
+                value:
+                  - type: translateX
+                    value:
+                      type: percentage
+                      value: 1
+            variables: []
+      vendorPrefix: []
+      loc:
+        source_index: 0
+        line: 2
+        column: 1
+      variables:
+        - name: b
+          value:
+            - type: token
+              value:
+                type: number
+                value: 456
+variables:
+  - name: a
+    value:
+      - type: token
+        value:
+          type: number
+          value: 123
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

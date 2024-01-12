@@ -6,12 +6,14 @@ use crate::macros::enum_property;
 use crate::printer::Printer;
 use crate::properties::custom::CustomProperty;
 use crate::properties::font::{FontFamily, FontStretch, FontStyle as FontStyleProperty, FontWeight};
+use crate::rules::variable::VariableDefined;
 use crate::stylesheet::ParserOptions;
 use crate::traits::{Parse, ToCss};
 use crate::values::angle::Angle;
 use crate::values::size::Size2D;
 use crate::values::string::CowArcStr;
 use crate::values::url::Url;
+use crate::variable_defined_parser::parse_variable_defined;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
 use cssparser::*;
@@ -30,6 +32,9 @@ pub struct FontFaceRule<'i> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 /// A property within an `@font-face` rule.
@@ -439,11 +444,14 @@ impl ToCss for FontStyle {
   }
 }
 
-pub(crate) struct FontFaceDeclarationParser;
+pub(crate) struct FontFaceDeclarationParser<'a, 'i, 'o> {
+  pub(crate) variables: &'a mut Vec<VariableDefined<'i>>,
+  pub(crate) options: &'a ParserOptions<'o, 'i>,
+}
 
 /// Parse a declaration within {} block: `color: blue`
-impl<'i> cssparser::DeclarationParser<'i> for FontFaceDeclarationParser {
-  type Declaration = FontFaceProperty<'i>;
+impl<'a, 'i, 'o> cssparser::DeclarationParser<'i> for FontFaceDeclarationParser<'a, 'i, 'o> {
+  type Declaration = Option<FontFaceProperty<'i>>;
   type Error = ParserError<'i>;
 
   fn parse_value<'t>(
@@ -455,7 +463,7 @@ impl<'i> cssparser::DeclarationParser<'i> for FontFaceDeclarationParser {
       ($property: ident, $type: ty) => {
         if let Ok(c) = <$type>::parse(input) {
           if input.expect_exhausted().is_ok() {
-            return Ok(FontFaceProperty::$property(c));
+            return Ok(Some(FontFaceProperty::$property(c)));
           }
         }
       };
@@ -465,7 +473,7 @@ impl<'i> cssparser::DeclarationParser<'i> for FontFaceDeclarationParser {
     match_ignore_ascii_case! { &name,
       "src" => {
         if let Ok(sources) = input.parse_comma_separated(Source::parse) {
-          return Ok(FontFaceProperty::Source(sources))
+          return Ok(Some(FontFaceProperty::Source(sources)))
         }
       },
       "font-family" => property!(FontFamily, FontFamily),
@@ -477,28 +485,45 @@ impl<'i> cssparser::DeclarationParser<'i> for FontFaceDeclarationParser {
     }
 
     input.reset(&state);
-    return Ok(FontFaceProperty::Custom(CustomProperty::parse(
+    return Ok(Some(FontFaceProperty::Custom(CustomProperty::parse(
       name.into(),
       input,
       &ParserOptions::default(),
-    )?));
+    )?)));
   }
 }
 
 /// Default methods reject all at rules.
-impl<'i> AtRuleParser<'i> for FontFaceDeclarationParser {
+impl<'a, 'i, 'o> AtRuleParser<'i> for FontFaceDeclarationParser<'a, 'i, 'o> {
   type Prelude = ();
-  type AtRule = FontFaceProperty<'i>;
+  type AtRule = Option<FontFaceProperty<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'i> QualifiedRuleParser<'i> for FontFaceDeclarationParser {
+impl<'a, 'i, 'o> QualifiedRuleParser<'i> for FontFaceDeclarationParser<'a, 'i, 'o> {
   type Prelude = ();
-  type QualifiedRule = FontFaceProperty<'i>;
+  type QualifiedRule = Option<FontFaceProperty<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'i> RuleBodyItemParser<'i, FontFaceProperty<'i>, ParserError<'i>> for FontFaceDeclarationParser {
+impl<'a, 'i, 'o> VariableDefineParser<'i> for FontFaceDeclarationParser<'a, 'i, 'o> {
+  type Error = ParserError<'i>;
+
+  type Value = Option<FontFaceProperty<'i>>;
+  fn parse_value_defined<'t>(
+    &mut self,
+    start: &ParserState,
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, 't>,
+  ) -> Result<Self::Value, ParseError<'i, Self::Error>> {
+    self.variables.push(parse_variable_defined(name, input, self.options)?);
+    Ok(None)
+  }
+}
+
+impl<'a, 'i, 'o> RuleBodyItemParser<'i, Option<FontFaceProperty<'i>>, ParserError<'i>>
+  for FontFaceDeclarationParser<'a, 'i, 'o>
+{
   fn parse_qualified(&self) -> bool {
     false
   }

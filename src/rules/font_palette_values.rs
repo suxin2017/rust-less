@@ -6,12 +6,14 @@ use crate::error::{ParserError, PrinterError};
 use crate::printer::Printer;
 use crate::properties::custom::CustomProperty;
 use crate::properties::font::FontFamily;
+use crate::rules::variable::VariableDefined;
 use crate::stylesheet::ParserOptions;
 use crate::targets::Targets;
 use crate::traits::{Parse, ToCss};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::ident::DashedIdent;
 use crate::values::number::CSSInteger;
+use crate::variable_defined_parser::parse_variable_defined;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
 use cssparser::*;
@@ -31,6 +33,9 @@ pub struct FontPaletteValuesRule<'i> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 /// A property within an `@font-palette-values` rule.
@@ -91,10 +96,12 @@ pub struct OverrideColors {
   color: CssColor,
 }
 
-pub(crate) struct FontPaletteValuesDeclarationParser;
+pub(crate) struct FontPaletteValuesDeclarationParser<'a, 'i> {
+  pub(crate) variables: &'a mut Vec<VariableDefined<'i>>,
+}
 
-impl<'i> cssparser::DeclarationParser<'i> for FontPaletteValuesDeclarationParser {
-  type Declaration = FontPaletteValuesProperty<'i>;
+impl<'a, 'i> cssparser::DeclarationParser<'i> for FontPaletteValuesDeclarationParser<'a, 'i> {
+  type Declaration = Option<FontPaletteValuesProperty<'i>>;
   type Error = ParserError<'i>;
 
   fn parse_value<'t>(
@@ -109,49 +116,65 @@ impl<'i> cssparser::DeclarationParser<'i> for FontPaletteValuesDeclarationParser
         if let Ok(font_family) = FontFamily::parse(input) {
           return match font_family {
             FontFamily::Generic(_) => Err(input.new_custom_error(ParserError::InvalidDeclaration)),
-            _ => Ok(FontPaletteValuesProperty::FontFamily(font_family))
+            _ => Ok(Some(FontPaletteValuesProperty::FontFamily(font_family)))
           }
         }
       },
       "base-palette" => {
         // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
         if let Ok(base_palette) = BasePalette::parse(input) {
-          return Ok(FontPaletteValuesProperty::BasePalette(base_palette))
+          return Ok(Some(FontPaletteValuesProperty::BasePalette(base_palette)))
         }
       },
       "override-colors" => {
         // https://drafts.csswg.org/css-fonts-4/#override-color
         if let Ok(override_colors) = input.parse_comma_separated(OverrideColors::parse) {
-          return Ok(FontPaletteValuesProperty::OverrideColors(override_colors))
+          return Ok(Some(FontPaletteValuesProperty::OverrideColors(override_colors)))
         }
       },
       _ => return Err(input.new_custom_error(ParserError::InvalidDeclaration))
     }
 
     input.reset(&state);
-    return Ok(FontPaletteValuesProperty::Custom(CustomProperty::parse(
+    return Ok(Some(FontPaletteValuesProperty::Custom(CustomProperty::parse(
       name.into(),
       input,
       &ParserOptions::default(),
-    )?));
+    )?)));
   }
 }
 
 /// Default methods reject all at rules.
-impl<'i> AtRuleParser<'i> for FontPaletteValuesDeclarationParser {
+impl<'a, 'i> AtRuleParser<'i> for FontPaletteValuesDeclarationParser<'a, 'i> {
   type Prelude = ();
-  type AtRule = FontPaletteValuesProperty<'i>;
+  type AtRule = Option<FontPaletteValuesProperty<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'i> QualifiedRuleParser<'i> for FontPaletteValuesDeclarationParser {
+impl<'a, 'i> QualifiedRuleParser<'i> for FontPaletteValuesDeclarationParser<'a, 'i> {
   type Prelude = ();
-  type QualifiedRule = FontPaletteValuesProperty<'i>;
+  type QualifiedRule = Option<FontPaletteValuesProperty<'i>>;
   type Error = ParserError<'i>;
 }
 
-impl<'i> RuleBodyItemParser<'i, FontPaletteValuesProperty<'i>, ParserError<'i>>
-  for FontPaletteValuesDeclarationParser
+impl<'a, 'i> VariableDefineParser<'i> for FontPaletteValuesDeclarationParser<'a, 'i> {
+  type Value = Option<FontPaletteValuesProperty<'i>>;
+  type Error = ParserError<'i>;
+  fn parse_value_defined<'t>(
+    &mut self,
+    start: &ParserState,
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, 't>,
+  ) -> Result<Self::Value, ParseError<'i, Self::Error>> {
+    self
+      .variables
+      .push(parse_variable_defined(name, input, &ParserOptions::default())?);
+    Ok(None)
+  }
+}
+
+impl<'a, 'i> RuleBodyItemParser<'i, Option<FontPaletteValuesProperty<'i>>, ParserError<'i>>
+  for FontPaletteValuesDeclarationParser<'a, 'i>
 {
   fn parse_qualified(&self) -> bool {
     false
@@ -168,16 +191,24 @@ impl<'i> FontPaletteValuesRule<'i> {
     input: &mut Parser<'i, 't>,
     loc: Location,
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
-    let mut decl_parser = FontPaletteValuesDeclarationParser;
+    let mut variables = vec![];
+    let mut decl_parser = FontPaletteValuesDeclarationParser {
+      variables: &mut variables,
+    };
     let mut parser = RuleBodyParser::new(input, &mut decl_parser);
     let mut properties = vec![];
     while let Some(decl) = parser.next() {
-      if let Ok(decl) = decl {
+      if let Ok(Some(decl)) = decl {
         properties.push(decl);
       }
     }
 
-    Ok(FontPaletteValuesRule { name, properties, loc })
+    Ok(FontPaletteValuesRule {
+      name,
+      properties,
+      variables,
+      loc,
+    })
   }
 }
 
@@ -349,8 +380,12 @@ impl<'i> FontPaletteValuesRule<'i> {
       rules: CssRuleList(vec![CssRule::FontPaletteValues(FontPaletteValuesRule {
         name: self.name.clone(),
         properties,
+        //TODO: 和另一个一样
+        variables: self.variables.clone(),
         loc: self.loc.clone(),
       })]),
+      //TODO: 和另一个一样
+      variables: vec![],
       loc: self.loc.clone(),
     })
   }

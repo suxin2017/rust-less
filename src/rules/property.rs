@@ -1,6 +1,9 @@
 //! The `@property` rule.
 
 use super::Location;
+use crate::rules::variable::VariableDefined;
+use crate::stylesheet::ParserOptions;
+use crate::variable_defined_parser::parse_variable_defined;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
 use crate::{
@@ -40,6 +43,9 @@ pub struct PropertyRule<'i> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 impl<'i> PropertyRule<'i> {
@@ -47,11 +53,15 @@ impl<'i> PropertyRule<'i> {
     name: DashedIdent<'i>,
     input: &mut Parser<'i, 't>,
     loc: Location,
+    options: &ParserOptions<'_, 'i>,
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+    let mut variables = vec![];
     let mut parser = PropertyRuleDeclarationParser {
       syntax: None,
       inherits: None,
       initial_value: None,
+      variables: &mut variables,
+      options,
     };
 
     let mut decl_parser = RuleBodyParser::new(input, &mut parser);
@@ -61,7 +71,6 @@ impl<'i> PropertyRule<'i> {
         Err((e, _)) => return Err(e),
       }
     }
-
     // `syntax` and `inherits` are always required.
     let parser = decl_parser.parser;
     let syntax = parser
@@ -92,11 +101,11 @@ impl<'i> PropertyRule<'i> {
         Some(syntax.parse_value(&mut parser)?)
       }
     };
-
     return Ok(PropertyRule {
       name,
       syntax,
       inherits,
+      variables,
       initial_value,
       loc,
     });
@@ -148,13 +157,15 @@ impl<'i> ToCss for PropertyRule<'i> {
   }
 }
 
-pub(crate) struct PropertyRuleDeclarationParser<'i> {
+pub(crate) struct PropertyRuleDeclarationParser<'a, 'i, 'o> {
   syntax: Option<SyntaxString>,
   inherits: Option<bool>,
   initial_value: Option<&'i str>,
+  variables: &'a mut Vec<VariableDefined<'i>>,
+  options: &'a ParserOptions<'o, 'i>,
 }
 
-impl<'i> cssparser::DeclarationParser<'i> for PropertyRuleDeclarationParser<'i> {
+impl<'a, 'i, 'o> cssparser::DeclarationParser<'i> for PropertyRuleDeclarationParser<'a, 'i, 'o> {
   type Declaration = ();
   type Error = ParserError<'i>;
 
@@ -195,19 +206,33 @@ impl<'i> cssparser::DeclarationParser<'i> for PropertyRuleDeclarationParser<'i> 
 }
 
 /// Default methods reject all at rules.
-impl<'i> AtRuleParser<'i> for PropertyRuleDeclarationParser<'i> {
+impl<'a, 'i, 'o> AtRuleParser<'i> for PropertyRuleDeclarationParser<'a, 'i, 'o> {
   type Prelude = ();
   type AtRule = ();
   type Error = ParserError<'i>;
 }
 
-impl<'i> QualifiedRuleParser<'i> for PropertyRuleDeclarationParser<'i> {
+impl<'a, 'i, 'o> QualifiedRuleParser<'i> for PropertyRuleDeclarationParser<'a, 'i, 'o> {
   type Prelude = ();
   type QualifiedRule = ();
   type Error = ParserError<'i>;
 }
 
-impl<'i> RuleBodyItemParser<'i, (), ParserError<'i>> for PropertyRuleDeclarationParser<'i> {
+impl<'a, 'i, 'o> VariableDefineParser<'i> for PropertyRuleDeclarationParser<'a, 'i, 'o> {
+  type Error = ParserError<'i>;
+  type Value = ();
+  fn parse_value_defined<'t>(
+    &mut self,
+    start: &ParserState,
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, 't>,
+  ) -> Result<Self::Value, ParseError<'i, Self::Error>> {
+    self.variables.push(parse_variable_defined(name, input, self.options)?);
+    Ok(())
+  }
+}
+
+impl<'a, 'i, 'o> RuleBodyItemParser<'i, (), ParserError<'i>> for PropertyRuleDeclarationParser<'a, 'i, 'o> {
   fn parse_qualified(&self) -> bool {
     false
   }

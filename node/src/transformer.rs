@@ -307,6 +307,8 @@ impl<'i> Visitor<'i, AtRule<'i>> for JsVisitor {
                 "custom"
               }
             }
+            // TODO: visit
+            CssRule::Variable(..) => return Ok(None),
             CssRule::Ignored => return Ok(None),
           };
 

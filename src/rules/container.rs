@@ -12,6 +12,7 @@ use crate::media_query::{
 use crate::parser::DefaultAtRule;
 use crate::printer::Printer;
 use crate::properties::{Property, PropertyId};
+use crate::rules::variable::VariableDefined;
 #[cfg(feature = "serde")]
 use crate::serialization::ValueWrapper;
 use crate::targets::{Features, Targets};
@@ -37,6 +38,9 @@ pub struct ContainerRule<'i, R = DefaultAtRule> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// The variables of container
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 /// Represents a container condition.
