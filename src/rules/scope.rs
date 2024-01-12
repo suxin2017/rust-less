@@ -5,6 +5,7 @@ use super::{CssRuleList, MinifyContext};
 use crate::error::{MinifyError, PrinterError};
 use crate::parser::DefaultAtRule;
 use crate::printer::Printer;
+use crate::rules::variable::VariableDefined;
 use crate::selector::SelectorList;
 use crate::traits::ToCss;
 #[cfg(feature = "visitor")]
@@ -35,6 +36,9 @@ pub struct ScopeRule<'i, R = DefaultAtRule> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 impl<'i, T: Clone> ScopeRule<'i, T> {
@@ -66,7 +70,8 @@ impl<'i, T: ToCss> ToCss for ScopeRule<'i, T> {
       // <scope-start> is treated as an ancestor of scope end.
       // https://drafts.csswg.org/css-nesting/#nesting-at-scope
       if let Some(scope_start) = &self.scope_start {
-        dest.with_context(scope_start, |dest| scope_end.to_css(dest))?;
+        // TODO
+        dest.with_context(Some(scope_start), None, |dest| scope_end.to_css(dest))?;
       } else {
         scope_end.to_css(dest)?;
       }

@@ -1,0 +1,75 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: style
+    value:
+      selectors:
+        - - type: class
+            name: a
+      declarations:
+        importantDeclarations: []
+        declarations: []
+        variables: []
+      rules:
+        - type: style
+          value:
+            selectors:
+              - - type: nesting
+                - type: combinator
+                  value: descendant
+                - type: class
+                  name: b
+            declarations:
+              importantDeclarations: []
+              declarations: []
+              variables: []
+            rules: []
+            loc:
+              source_index: 0
+              line: 4
+              column: 5
+            variables:
+              - name: c
+                value:
+                  - type: token
+                    value:
+                      type: ident
+                      value: f
+                loc:
+                  source_index: 0
+                  line: 5
+                  column: 5
+      loc:
+        source_index: 0
+        line: 2
+        column: 3
+      variables:
+        - name: a
+          value:
+            - type: token
+              value:
+                type: number
+                value: 456
+          loc:
+            source_index: 0
+            line: 3
+            column: 3
+variables:
+  - name: a
+    value:
+      - type: token
+        value:
+          type: number
+          value: 123
+    loc:
+      source_index: 0
+      line: 1
+      column: 3
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

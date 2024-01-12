@@ -1,0 +1,100 @@
+---
+source: tests/test_variables.rs
+expression: stylesheet
+---
+rules:
+  - type: media
+    value:
+      query:
+        mediaQueries:
+          - qualifier: ~
+            mediaType: screen
+            condition:
+              type: feature
+              value:
+                type: range
+                name: width
+                operator: greater-than-equal
+                value:
+                  type: length
+                  value:
+                    type: value
+                    value:
+                      unit: px
+                      value: 900
+      rules:
+        - type: style
+          value:
+            selectors:
+              - - type: type
+                  name: article
+            declarations:
+              importantDeclarations: []
+              declarations:
+                - property: padding
+                  value:
+                    top:
+                      type: length-percentage
+                      value:
+                        type: dimension
+                        value:
+                          unit: rem
+                          value: 1
+                    right:
+                      type: length-percentage
+                      value:
+                        type: dimension
+                        value:
+                          unit: rem
+                          value: 3
+                    bottom:
+                      type: length-percentage
+                      value:
+                        type: dimension
+                        value:
+                          unit: rem
+                          value: 1
+                    left:
+                      type: length-percentage
+                      value:
+                        type: dimension
+                        value:
+                          unit: rem
+                          value: 3
+              variables: []
+            rules: []
+            loc:
+              source_index: 0
+              line: 4
+              column: 3
+            variables:
+              - name: c
+                value:
+                  - type: token
+                    value:
+                      type: number
+                      value: 789
+      loc:
+        source_index: 0
+        line: 2
+        column: 1
+      variables:
+        - name: b
+          value:
+            - type: token
+              value:
+                type: number
+                value: 456
+variables:
+  - name: a
+    value:
+      - type: token
+        value:
+          type: number
+          value: 123
+sources:
+  - ""
+sourceMapUrls:
+  - ~
+licenseComments: []
+

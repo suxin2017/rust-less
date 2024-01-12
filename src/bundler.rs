@@ -23,6 +23,7 @@
 //! let stylesheet = bundler.bundle(Path::new("style.css")).unwrap();
 //! ```
 
+use crate::rules::variable::VariableDefined;
 use crate::{
   error::ErrorLocation,
   parser::DefaultAtRuleParser,
@@ -38,7 +39,7 @@ use crate::{
     Location,
   },
   traits::{AtRuleParser, ToCss},
-  values::ident::DashedIdentReference,
+  values::{ident::DashedIdentReference, string::CowArcStr},
 };
 use crate::{
   error::{Error, ParserError},
@@ -55,7 +56,7 @@ use dashmap::DashMap;
 use parcel_sourcemap::SourceMap;
 use rayon::prelude::*;
 use std::{
-  collections::HashSet,
+  collections::{HashMap, HashSet},
   fs,
   path::{Path, PathBuf},
   sync::Mutex,
@@ -121,6 +122,7 @@ impl FileProvider {
 }
 
 unsafe impl Sync for FileProvider {}
+
 unsafe impl Send for FileProvider {}
 
 impl SourceProvider for FileProvider {
@@ -265,6 +267,7 @@ where
 
     // Phase 3: concatenate.
     let mut rules: Vec<CssRule<'a, T::AtRule>> = Vec::new();
+    let mut variables: Vec<VariableDefined<'a>> = Vec::new();
     self.inline(&mut rules);
 
     let sources = self
@@ -275,7 +278,7 @@ where
       .flat_map(|s| s.stylesheet.as_ref().unwrap().sources.iter().cloned())
       .collect();
 
-    let mut stylesheet = StyleSheet::new(sources, CssRuleList(rules), self.options.clone());
+    let mut stylesheet = StyleSheet::new(sources, CssRuleList(rules), variables, self.options.clone());
 
     stylesheet.source_map_urls = self
       .stylesheets
@@ -652,6 +655,7 @@ where
     ) {
       let stylesheet = &mut stylesheets[source_index as usize];
       let mut rules = std::mem::take(&mut stylesheet.stylesheet.as_mut().unwrap().rules.0);
+      // let mut variables = std::mem::take(&mut stylesheet.stylesheet.as_mut().unwrap().variables);
 
       // Hoist css modules deps
       let mut dep_index = 0;
@@ -701,6 +705,8 @@ where
         rules = vec![CssRule::LayerBlock(LayerBlockRule {
           name: stylesheet.layer.take().unwrap(),
           rules: CssRuleList(rules),
+          // TODO: 不知道是干嘛的后面看下
+          variables: vec![],
           loc: stylesheet.loc,
         })]
       }
@@ -709,6 +715,8 @@ where
         rules = vec![CssRule::Media(MediaRule {
           query: std::mem::replace(&mut stylesheet.media, MediaList::new()),
           rules: CssRuleList(rules),
+          // TODO: 不知道是干嘛的后面看下
+          variables: vec![],
           loc: stylesheet.loc,
         })]
       }
@@ -717,6 +725,8 @@ where
         rules = vec![CssRule::Supports(SupportsRule {
           condition: stylesheet.supports.take().unwrap(),
           rules: CssRuleList(rules),
+          // TODO: 不知道是干嘛的后面看下
+          variables: vec![],
           loc: stylesheet.loc,
         })]
       }
@@ -839,7 +849,7 @@ mod tests {
     }
   }
 
-  macro_rules! fs(
+  macro_rules! fs (
     { $($key:literal: $value:expr),* } => {
       {
         #[allow(unused_mut)]

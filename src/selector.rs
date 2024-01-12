@@ -1598,18 +1598,28 @@ where
   W: fmt::Write,
 {
   if let Some(ctx) = context {
-    // If there's only one simple selector, just serialize it directly.
-    // Otherwise, use an :is() pseudo class.
-    // Type selectors are only allowed at the start of a compound selector,
-    // so use :is() if that is not the case.
-    if ctx.selectors.0.len() == 1
-      && (first || (!has_type_selector(&ctx.selectors.0[0]) && is_simple(&ctx.selectors.0[0])))
-    {
-      serialize_selector(ctx.selectors.0.first().unwrap(), dest, ctx.parent, false)
+    if let Some(selectors) = ctx.selectors {
+      // If there's only one simple selector, just serialize it directly.
+      // Otherwise, use an :is() pseudo class.
+      // Type selectors are only allowed at the start of a compound selector,
+      // so use :is() if that is not the case.
+      if selectors.0.len() == 1
+        && (first || (!has_type_selector(&selectors.0[0]) && is_simple(&selectors.0[0])))
+      {
+        serialize_selector(selectors.0.first().unwrap(), dest, ctx.parent, false)
+      } else {
+        dest.write_str(":is(")?;
+        serialize_selector_list(selectors.0.iter(), dest, ctx.parent, false)?;
+        dest.write_char(')')
+      }
     } else {
-      dest.write_str(":is(")?;
-      serialize_selector_list(ctx.selectors.0.iter(), dest, ctx.parent, false)?;
-      dest.write_char(')')
+      // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
+      // Otherwise, if nesting is supported, serialize the nesting selector directly.
+      if should_compile!(dest.targets, Nesting) {
+        dest.write_str(":scope")
+      } else {
+        dest.write_char('&')
+      }
     }
   } else {
     // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.

@@ -6,6 +6,7 @@ use super::MinifyContext;
 use crate::error::{MinifyError, PrinterError};
 use crate::parser::DefaultAtRule;
 use crate::printer::Printer;
+use crate::rules::variable::VariableDefined;
 use crate::traits::ToCss;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;

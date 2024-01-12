@@ -1,6 +1,6 @@
 //! CSS custom properties and unparsed token values.
 
-use crate::error::{ParserError, PrinterError, PrinterErrorKind};
+use crate::error::{Error, ParserError, PrinterError, PrinterErrorKind};
 use crate::macros::enum_property;
 use crate::prefixes::Feature;
 use crate::printer::Printer;
@@ -25,6 +25,7 @@ use crate::values::url::Url;
 use crate::visitor::Visit;
 use cssparser::color::parse_hash_color;
 use cssparser::*;
+use std::fmt::Write;
 
 #[cfg(feature = "serde")]
 use crate::serialization::ValueWrapper;
@@ -240,6 +241,161 @@ pub enum TokenOrValue<'i> {
   Resolution(Resolution),
   /// A dashed ident.
   DashedIdent(DashedIdent<'i>),
+  /// express
+  BinaryExpress(BinaryExpress<'i>),
+  /// variable
+  VariableExpress(Token<'i>),
+  /// Block
+  Block(Block<'i>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "visitor", derive(Visit), visit(visit_token, TOKENS), visit_types(TOKENS | COLORS | URLS | VARIABLES | ENVIRONMENT_VARIABLES | FUNCTIONS | LENGTHS | ANGLES | TIMES | RESOLUTIONS | DASHED_IDENTS))]
+#[cfg_attr(feature = "into_owned", derive(static_self::IntoOwned))]
+#[cfg_attr(
+  feature = "serde",
+  derive(serde::Serialize, serde::Deserialize),
+  serde(rename_all = "kebab-case")
+)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct BinaryExpress<'i> {
+  /// A token.
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  op: Token<'i>,
+  left: Box<TokenOrValue<'i>>,
+  right: Box<TokenOrValue<'i>>,
+}
+
+impl<'i> BinaryExpress<'i> {
+  fn try_parse<'t>(input: &mut Parser<'i, 't>, options: &ParserOptions<'_, 'i>) -> Result<Self, ()> {
+    return input.try_parse(|input| {
+      let left = TokenList::parser_token_or_value(input, options, 0, true, true, true);
+      if let Some(Ok((left, ..))) = left {
+        if matches!(
+          left,
+          TokenOrValue::Token(Token::Dimension { .. })
+            | TokenOrValue::VariableExpress(..)
+            | TokenOrValue::BinaryExpress(..)
+        ) {
+          return input.try_parse(|input| {
+            if let Ok(op @ &cssparser::Token::Delim('+' | '-' | '*' | '/')) = input.next() {
+              let op = Token::from(op);
+              let right = TokenList::parser_token_or_value(input, options, 0, true, true, true);
+              if let Some(Ok((right, ..))) = right {
+                if matches!(
+                  right,
+                  TokenOrValue::Token(Token::Dimension { .. })
+                    | TokenOrValue::VariableExpress(..)
+                    | TokenOrValue::BinaryExpress(..)
+                ) {
+                  return Ok(BinaryExpress {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                  });
+                }
+              }
+            }
+            Err(())
+          });
+        };
+      }
+      return Err(());
+    });
+  }
+}
+
+#[derive(Debug)]
+struct InterpretValue<'a> {
+  value: f32,
+  unit: CowArcStr<'a>,
+}
+
+impl<'i> BinaryExpress<'i> {
+  fn interpret<'t, W>(&self, dest: &mut Printer<W>) -> Result<InterpretValue<'i>, ()>
+  where
+    W: std::fmt::Write,
+  {
+    let left = self.left.interpret(dest)?;
+    let right = self.right.interpret(dest)?;
+    match self.op {
+      Token::Delim('+') => {
+        return Ok(InterpretValue {
+          value: left.value + right.value,
+          unit: left.unit,
+        });
+      }
+      Token::Delim('-') => {}
+      Token::Delim('*') => {}
+      Token::Delim('/') => {}
+      _ => unreachable!(),
+    }
+
+    Err(())
+  }
+}
+
+impl<'i> TokenOrValue<'i> {
+  fn interpret<'t, W>(&self, dest: &mut Printer<W>) -> Result<InterpretValue<'i>, ()>
+  where
+    W: std::fmt::Write,
+  {
+    match self {
+      TokenOrValue::Token(Token::Dimension {
+        has_sign,
+        value,
+        int_value,
+        unit,
+      }) => {
+        return Ok(InterpretValue {
+          value: *value,
+          unit: unit.clone(),
+        });
+      }
+      //TODO
+      // TokenOrValue::VariableExpress(Token::AtKeyword(val)) => {
+      //     if let Some(context) = dest.context() {
+      //         if let Some(val) = context.variables.map(|variable| variable.get(val)).flatten() {
+      //
+      //         }
+      //
+      //
+      //     }
+      // }
+      _ => unreachable!(),
+    }
+    Err(())
+  }
+}
+
+impl<'a> ToCss for BinaryExpress<'a> {
+  #[inline]
+  fn to_css<W>(&self, dest: &mut Printer<W>) -> Result<(), PrinterError>
+  where
+    W: std::fmt::Write,
+  {
+    if let Ok(result) = self.interpret(dest) {
+      dbg!(&result);
+      dest.write_fmt(format_args!("{}{}", result.value, result.unit))?;
+    }
+    Ok(())
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "visitor", derive(Visit), visit(visit_token, TOKENS), visit_types(TOKENS | COLORS | URLS | VARIABLES | ENVIRONMENT_VARIABLES | FUNCTIONS | LENGTHS | ANGLES | TIMES | RESOLUTIONS | DASHED_IDENTS))]
+#[cfg_attr(feature = "into_owned", derive(static_self::IntoOwned))]
+#[cfg_attr(
+  feature = "serde",
+  derive(serde::Serialize, serde::Deserialize),
+  serde(rename_all = "kebab-case")
+)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct Block<'i> {
+  /// A token.
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  token: Token<'i>,
+  token_list: TokenList<'i>,
 }
 
 impl<'i> From<Token<'i>> for TokenOrValue<'i> {
@@ -290,10 +446,19 @@ impl<'i> TokenList<'i> {
     depth: usize,
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
     let mut tokens = vec![];
-    TokenList::parse_into(input, &mut tokens, options, depth)?;
+    TokenList::parse_into(input, &mut tokens, options, depth, false)?;
 
     // Slice off leading and trailing whitespace if there are at least two tokens.
     // If there is only one token, we must preserve it. e.g. `--foo: ;` is valid.
+
+    if let Some(value) = Self::slice_tokens_whitespace(&mut tokens) {
+      return Ok(value);
+    }
+
+    Ok(TokenList(tokens))
+  }
+
+  fn slice_tokens_whitespace(tokens: &mut Vec<TokenOrValue<'i>>) -> Option<TokenList<'i>> {
     if tokens.len() >= 2 {
       let mut slice = &tokens[..];
       if matches!(tokens.first(), Some(token) if token.is_whitespace()) {
@@ -302,12 +467,29 @@ impl<'i> TokenList<'i> {
       if matches!(tokens.last(), Some(token) if token.is_whitespace()) {
         slice = &slice[..slice.len() - 1];
       }
-      return Ok(TokenList(slice.to_vec()));
+      return Some(TokenList(slice.to_vec()));
     }
-
-    return Ok(TokenList(tokens));
+    None
   }
 
+  pub(crate) fn parse_valueable_token_list<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+    depth: usize,
+  ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
+    {
+      let mut tokens = vec![];
+      TokenList::parse_into(input, &mut tokens, options, depth, true)?;
+
+      // Slice off leading and trailing whitespace if there are at least two tokens.
+      // If there is only one token, we must preserve it. e.g. `--foo: ;` is valid.
+      if let Some(value) = Self::slice_tokens_whitespace(&mut tokens) {
+        return Ok(value);
+      }
+
+      Ok(TokenList(tokens))
+    }
+  }
   pub(crate) fn parse_raw<'t>(
     input: &mut Parser<'i, 't>,
     tokens: &mut Vec<TokenOrValue<'i>>,
@@ -344,7 +526,7 @@ impl<'i> TokenList<'i> {
           return Err(ParseError {
             kind: ParseErrorKind::Basic(BasicParseErrorKind::UnexpectedToken(token.clone())),
             location: state.source_location(),
-          })
+          });
         }
         Ok(token) => {
           tokens.push(Token::from(token).into());
@@ -361,6 +543,7 @@ impl<'i> TokenList<'i> {
     tokens: &mut Vec<TokenOrValue<'i>>,
     options: &ParserOptions<'_, 'i>,
     depth: usize,
+    is_variable: bool,
   ) -> Result<(), ParseError<'i, ParserError<'i>>> {
     if depth > 500 {
       return Err(input.new_custom_error(ParserError::MaximumNestingDepth));
@@ -369,136 +552,190 @@ impl<'i> TokenList<'i> {
     let mut last_is_delim = false;
     let mut last_is_whitespace = false;
     loop {
-      let state = input.state();
-      match input.next_including_whitespace_and_comments() {
-        Ok(&cssparser::Token::WhiteSpace(..)) | Ok(&cssparser::Token::Comment(..)) => {
-          // Skip whitespace if the last token was a delimiter.
-          // Otherwise, replace all whitespace and comments with a single space character.
-          if !last_is_delim {
-            tokens.push(Token::WhiteSpace(" ".into()).into());
-            last_is_whitespace = true;
+      if let Ok(express) = BinaryExpress::try_parse(input, options) {
+        tokens.push(TokenOrValue::BinaryExpress(express));
+      }
+      if let Some(result) =
+        Self::parser_token_or_value(input, options, depth, is_variable, last_is_delim, last_is_whitespace)
+      {
+        match result {
+          Ok(result) => {
+            let token = result.0;
+            last_is_delim = result.1;
+            last_is_whitespace = result.2;
+            // If this is a delimiter, and the last token was whitespace,
+            // replace the whitespace with the delimiter since both are not required.
+            if last_is_delim && last_is_whitespace {
+              let last = tokens.last_mut().unwrap();
+              *last = token;
+            } else {
+              tokens.push(token);
+            }
+          }
+          Err(e) => {
+            return Err(e);
           }
         }
-        Ok(&cssparser::Token::Function(ref f)) => {
-          // Attempt to parse embedded color values into hex tokens.
-          let f = f.into();
-          if let Some(color) = try_parse_color_token(&f, &state, input) {
-            tokens.push(TokenOrValue::Color(color));
-            last_is_delim = false;
-            last_is_whitespace = false;
-          } else if let Ok(color) = input.try_parse(|input| UnresolvedColor::parse(&f, input, options)) {
-            tokens.push(TokenOrValue::UnresolvedColor(color));
-            last_is_delim = true;
-            last_is_whitespace = false;
-          } else if f == "url" {
-            input.reset(&state);
-            tokens.push(TokenOrValue::Url(Url::parse(input)?));
-            last_is_delim = false;
-            last_is_whitespace = false;
-          } else if f == "var" {
-            let var = input.parse_nested_block(|input| {
-              let var = Variable::parse(input, options, depth + 1)?;
-              Ok(TokenOrValue::Var(var))
-            })?;
-            tokens.push(var);
-            last_is_delim = true;
-            last_is_whitespace = false;
-          } else if f == "env" {
-            let env = input.parse_nested_block(|input| {
-              let env = EnvironmentVariable::parse_nested(input, options, depth + 1)?;
-              Ok(TokenOrValue::Env(env))
-            })?;
-            tokens.push(env);
-            last_is_delim = true;
-            last_is_whitespace = false;
-          } else {
-            let arguments = input.parse_nested_block(|input| TokenList::parse(input, options, depth + 1))?;
-            tokens.push(TokenOrValue::Function(Function {
-              name: Ident(f),
-              arguments,
-            }));
-            last_is_delim = true; // Whitespace is not required after any of these chars.
-            last_is_whitespace = false;
-          }
-        }
-        Ok(&cssparser::Token::Hash(ref h)) | Ok(&cssparser::Token::IDHash(ref h)) => {
-          if let Ok((r, g, b, a)) = parse_hash_color(h.as_bytes()) {
-            tokens.push(TokenOrValue::Color(CssColor::RGBA(RGBA::new(r, g, b, a))));
-          } else {
-            tokens.push(Token::Hash(h.into()).into());
-          }
-          last_is_delim = false;
-          last_is_whitespace = false;
-        }
-        Ok(&cssparser::Token::UnquotedUrl(_)) => {
-          input.reset(&state);
-          tokens.push(TokenOrValue::Url(Url::parse(input)?));
-          last_is_delim = false;
-          last_is_whitespace = false;
-        }
-        Ok(&cssparser::Token::Ident(ref name)) if name.starts_with("--") => {
-          tokens.push(TokenOrValue::DashedIdent(name.into()));
-          last_is_delim = false;
-          last_is_whitespace = false;
-        }
-        Ok(token @ &cssparser::Token::ParenthesisBlock)
-        | Ok(token @ &cssparser::Token::SquareBracketBlock)
-        | Ok(token @ &cssparser::Token::CurlyBracketBlock) => {
-          tokens.push(Token::from(token).into());
-          let closing_delimiter = match token {
-            cssparser::Token::ParenthesisBlock => Token::CloseParenthesis,
-            cssparser::Token::SquareBracketBlock => Token::CloseSquareBracket,
-            cssparser::Token::CurlyBracketBlock => Token::CloseCurlyBracket,
-            _ => unreachable!(),
-          };
-
-          input.parse_nested_block(|input| TokenList::parse_into(input, tokens, options, depth + 1))?;
-
-          tokens.push(closing_delimiter.into());
-          last_is_delim = true; // Whitespace is not required after any of these chars.
-          last_is_whitespace = false;
-        }
-        Ok(token @ cssparser::Token::Dimension { .. }) => {
-          let value = if let Ok(length) = LengthValue::try_from(token) {
-            TokenOrValue::Length(length)
-          } else if let Ok(angle) = Angle::try_from(token) {
-            TokenOrValue::Angle(angle)
-          } else if let Ok(time) = Time::try_from(token) {
-            TokenOrValue::Time(time)
-          } else if let Ok(resolution) = Resolution::try_from(token) {
-            TokenOrValue::Resolution(resolution)
-          } else {
-            TokenOrValue::Token(token.into())
-          };
-          tokens.push(value);
-          last_is_delim = false;
-          last_is_whitespace = false;
-        }
-        Ok(token) if token.is_parse_error() => {
-          return Err(ParseError {
-            kind: ParseErrorKind::Basic(BasicParseErrorKind::UnexpectedToken(token.clone())),
-            location: state.source_location(),
-          })
-        }
-        Ok(token) => {
-          last_is_delim = matches!(token, cssparser::Token::Delim(_) | cssparser::Token::Comma);
-
-          // If this is a delimiter, and the last token was whitespace,
-          // replace the whitespace with the delimiter since both are not required.
-          if last_is_delim && last_is_whitespace {
-            let last = tokens.last_mut().unwrap();
-            *last = Token::from(token).into();
-          } else {
-            tokens.push(Token::from(token).into());
-          }
-
-          last_is_whitespace = false;
-        }
-        Err(_) => break,
+      } else {
+        break;
       }
     }
 
     Ok(())
+  }
+
+  fn parser_token_or_value<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+    depth: usize,
+    is_variable: bool,
+    last_is_delim: bool,
+    is_in_express: bool,
+  ) -> Option<Result<(TokenOrValue<'i>, bool, bool), ParseError<'i, ParserError<'i>>>> {
+    loop {
+      let state = input.state();
+      if let Ok(token) = input.next_including_whitespace_and_comments() {
+        if is_variable && matches!(token, cssparser::Token::Semicolon) {
+          return None;
+        }
+        match token {
+          &cssparser::Token::WhiteSpace(..) | &cssparser::Token::Comment(..) => {
+            // Skip whitespace if the last token was a delimiter.
+            // Otherwise, replace all whitespace and comments with a single space character.
+            if !last_is_delim {
+              return Some(Ok((Token::WhiteSpace(" ".into()).into(), last_is_delim, true)));
+            }
+            continue;
+          }
+          &cssparser::Token::Function(ref f) => {
+            // Attempt to parse embedded color values into hex tokens.
+            let f = f.into();
+            if let Some(color) = try_parse_color_token(&f, &state, input) {
+              return Some(Ok((TokenOrValue::Color(color), false, false)));
+            } else if let Ok(color) = input.try_parse(|input| UnresolvedColor::parse(&f, input, options)) {
+              return Some(Ok((TokenOrValue::UnresolvedColor(color), true, false)));
+            } else if f == "url" {
+              input.reset(&state);
+              let url = Url::parse(input);
+              return match url {
+                Ok(url) => Some(Ok((TokenOrValue::Url(url), false, false))),
+                Err(e) => Some(Err(e)),
+              };
+            } else if f == "var" {
+              let var = input.parse_nested_block(|input| {
+                let var = Variable::parse(input, options, depth + 1)?;
+                Ok(TokenOrValue::Var(var))
+              });
+
+              return match var {
+                Ok(var) => Some(Ok((var, true, false))),
+                Err(e) => Some(Err(e)),
+              };
+            } else if f == "env" {
+              let env = input.parse_nested_block(|input| {
+                let env = EnvironmentVariable::parse_nested(input, options, depth + 1)?;
+                Ok(TokenOrValue::Env(env))
+              });
+              return match env {
+                Ok(env) => Some(Ok((env, true, false))),
+                Err(e) => Some(Err(e)),
+              };
+            } else {
+              let arguments = input.parse_nested_block(|input| TokenList::parse(input, options, depth + 1));
+              return match arguments {
+                Ok(arguments) => Some(Ok((
+                  TokenOrValue::Function(Function {
+                    name: Ident(f),
+                    arguments,
+                  }),
+                  true,
+                  false,
+                ))),
+                Err(e) => Some(Err(e)),
+              };
+            }
+          }
+          &cssparser::Token::Hash(ref h) | &cssparser::Token::IDHash(ref h) => {
+            if let Ok((r, g, b, a)) = parse_hash_color(h.as_bytes()) {
+              return Some(Ok((
+                TokenOrValue::Color(CssColor::RGBA(RGBA::new(r, g, b, a))),
+                false,
+                false,
+              )));
+            } else {
+              return Some(Ok((Token::Hash(h.into()).into(), false, false)));
+            }
+          }
+          &cssparser::Token::UnquotedUrl(_) => {
+            input.reset(&state);
+            let url = Url::parse(input);
+            return match url {
+              Ok(url) => Some(Ok((TokenOrValue::Url(url), false, false))),
+              Err(e) => Some(Err(e)),
+            };
+          }
+          &cssparser::Token::Ident(ref name) if name.starts_with("--") => {
+            return Some(Ok((TokenOrValue::DashedIdent(name.into()), false, false)));
+          }
+          token @ &cssparser::Token::ParenthesisBlock
+          | token @ &cssparser::Token::SquareBracketBlock
+          | token @ &cssparser::Token::CurlyBracketBlock => {
+            let closing_delimiter = match token {
+              cssparser::Token::ParenthesisBlock => Token::CloseParenthesis,
+              cssparser::Token::SquareBracketBlock => Token::CloseSquareBracket,
+              cssparser::Token::CurlyBracketBlock => Token::CloseCurlyBracket,
+              _ => unreachable!(),
+            };
+            let token_list = input.parse_nested_block(|input| TokenList::parse(input, options, depth + 1));
+
+            return match token_list {
+              Ok(token_list) => Some(Ok((
+                TokenOrValue::Block(Block {
+                  token: closing_delimiter,
+                  token_list,
+                }),
+                true,
+                false,
+              ))),
+              Err(e) => Some(Err(e)),
+            };
+          }
+          token @ cssparser::Token::AtKeyword(..) => {
+            return Some(Ok((TokenOrValue::VariableExpress(token.into()), false, false)));
+          }
+          token @ cssparser::Token::Dimension { .. } => {
+            let value = if is_in_express {
+              TokenOrValue::Token(token.into())
+            } else if let Ok(length) = LengthValue::try_from(token) {
+              TokenOrValue::Length(length)
+            } else if let Ok(angle) = Angle::try_from(token) {
+              TokenOrValue::Angle(angle)
+            } else if let Ok(time) = Time::try_from(token) {
+              TokenOrValue::Time(time)
+            } else if let Ok(resolution) = Resolution::try_from(token) {
+              TokenOrValue::Resolution(resolution)
+            } else {
+              TokenOrValue::Token(token.into())
+            };
+
+            return Some(Ok((value, false, false)));
+          }
+          token if token.is_parse_error() => {
+            return Some(Err(ParseError {
+              kind: ParseErrorKind::Basic(BasicParseErrorKind::UnexpectedToken(token.clone())),
+              location: state.source_location(),
+            }));
+          }
+          token => {
+            let last_is_delim = matches!(token, cssparser::Token::Delim(_) | cssparser::Token::Comma);
+            return Some(Ok((Token::from(token).into(), last_is_delim, false)));
+          }
+        }
+      } else {
+        break;
+      }
+    }
+    None
   }
 }
 
@@ -531,6 +768,7 @@ impl<'i> TokenList<'i> {
     if !dest.minify && self.0.len() == 1 && matches!(self.0.first(), Some(token) if token.is_whitespace()) {
       return Ok(());
     }
+    let context = dest.context();
 
     let mut has_whitespace = false;
     for (i, token_or_value) in self.0.iter().enumerate() {
@@ -589,6 +827,11 @@ impl<'i> TokenList<'i> {
           v.to_css(dest)?;
           false
         }
+        TokenOrValue::BinaryExpress(binary_express) => {
+          dbg!(&binary_express);
+          binary_express.to_css(dest)?;
+          false
+        }
         TokenOrValue::Token(token) => match token {
           Token::Delim(d) => {
             if *d == '+' || *d == '-' {
@@ -617,11 +860,22 @@ impl<'i> TokenList<'i> {
             value.to_css(dest)?;
             false
           }
+          Token::AtKeyword(value) => {
+            // if let Some(ctx) = context {
+            //     if let Some(vs) = ctx.variables {
+            //         if let Some(token_list) = vs.get(value) {
+            //             token_list.value.to_css(dest, false);
+            //         }
+            //     }
+            // }
+            false
+          }
           _ => {
             token.to_css(dest)?;
             matches!(token, Token::WhiteSpace(..))
           }
         },
+        _ => false,
       };
     }
 
@@ -641,7 +895,7 @@ impl<'i> TokenList<'i> {
           return Err(PrinterError {
             kind: PrinterErrorKind::FmtError,
             loc: None,
-          })
+          });
         }
       }
     }

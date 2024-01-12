@@ -96,7 +96,10 @@ impl<'i, 'o> PropertyHandlerContext<'i, 'o> {
           declarations: DeclarationBlock {
             declarations: self.$decls.clone(),
             important_declarations: vec![],
+            // TODO: 不知道这里是干嘛的
+            variables: vec![],
           },
+          variables: style_rule.variables.clone(),
           rules: CssRuleList(vec![]),
           loc: style_rule.loc.clone(),
         };
@@ -174,11 +177,16 @@ impl<'i, 'o> PropertyHandlerContext<'i, 'o> {
           vendor_prefix: VendorPrefix::None,
           declarations: DeclarationBlock {
             declarations: entry.declarations.clone(),
+            //TODO: 这里应该从entry里面取值
+            variables: vec![],
             important_declarations: entry.important_declarations.clone(),
           },
+          variables: style_rule.variables.clone(),
           rules: CssRuleList(vec![]),
           loc: style_rule.loc.clone(),
         })]),
+        //TODO: 这里应该从entry里面取值
+        variables: vec![],
         loc: style_rule.loc.clone(),
       }));
     }

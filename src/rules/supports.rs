@@ -6,6 +6,7 @@ use crate::error::{MinifyError, ParserError, PrinterError};
 use crate::parser::DefaultAtRule;
 use crate::printer::Printer;
 use crate::properties::PropertyId;
+use crate::rules::variable::VariableDefined;
 use crate::targets::Targets;
 use crate::traits::{Parse, ToCss};
 use crate::values::string::CowArcStr;
@@ -32,6 +33,9 @@ pub struct SupportsRule<'i, R = DefaultAtRule> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 impl<'i, T: Clone> SupportsRule<'i, T> {
@@ -159,7 +163,6 @@ impl<'i> Parse<'i> for SupportsCondition<'i> {
     let in_parens = Self::parse_in_parens(input)?;
     let mut expected_type = None;
     let mut conditions = Vec::new();
-
     loop {
       let condition = input.try_parse(|input| {
         let location = input.current_source_location();
@@ -179,10 +182,8 @@ impl<'i> Parse<'i> for SupportsCondition<'i> {
         } else {
           expected_type = Some(found_type);
         }
-
         Self::parse_in_parens(input)
       });
-
       if let Ok(condition) = condition {
         if conditions.is_empty() {
           conditions.push(in_parens.clone())

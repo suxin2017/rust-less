@@ -14,7 +14,7 @@
 //! module also can be used to combine a CSS file and all of its dependencies together into a single
 //! style sheet. See the individual module documentation for more details and examples.
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "bundler")]
@@ -46,6 +46,7 @@ pub mod visitor;
 
 #[cfg(feature = "serde")]
 mod serialization;
+mod variable_defined_parser;
 
 #[cfg(test)]
 mod tests {

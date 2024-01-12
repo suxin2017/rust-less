@@ -5,9 +5,11 @@ use crate::declaration::{parse_declaration, DeclarationBlock};
 use crate::error::{ParserError, PrinterError};
 use crate::macros::enum_property;
 use crate::printer::Printer;
+use crate::rules::variable::VariableDefined;
 use crate::stylesheet::ParserOptions;
 use crate::traits::{Parse, ToCss};
 use crate::values::string::CowArcStr;
+use crate::variable_defined_parser::parse_variable_defined;
 #[cfg(feature = "visitor")]
 use crate::visitor::Visit;
 use cssparser::*;
@@ -171,6 +173,9 @@ pub struct PageRule<'i> {
   /// The location of the rule in the source file.
   #[cfg_attr(feature = "visitor", skip_visit)]
   pub loc: Location,
+  /// variables
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  pub variables: Vec<VariableDefined<'i>>,
 }
 
 impl<'i> PageRule<'i> {
@@ -182,8 +187,10 @@ impl<'i> PageRule<'i> {
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
     let mut declarations = DeclarationBlock::new();
     let mut rules = Vec::new();
+    let mut variables = vec![];
     let mut rule_parser = PageRuleParser {
       declarations: &mut declarations,
+      variables: &mut variables,
       rules: &mut rules,
       options: &options,
     };
@@ -202,6 +209,7 @@ impl<'i> PageRule<'i> {
     Ok(PageRule {
       selectors,
       declarations,
+      variables,
       rules,
       loc,
     })
@@ -302,6 +310,7 @@ impl<'i> ToCss for PageSelector<'i> {
 struct PageRuleParser<'a, 'o, 'i> {
   declarations: &'a mut DeclarationBlock<'i>,
   rules: &'a mut Vec<PageMarginRule<'i>>,
+  variables: &'a mut Vec<VariableDefined<'i>>,
   options: &'a ParserOptions<'o, 'i>,
 }
 
@@ -319,6 +328,7 @@ impl<'a, 'o, 'i> cssparser::DeclarationParser<'i> for PageRuleParser<'a, 'o, 'i>
       input,
       &mut self.declarations.declarations,
       &mut self.declarations.important_declarations,
+      &mut self.declarations.variables,
       &self.options,
     )
   }
@@ -364,6 +374,20 @@ impl<'a, 'o, 'i> QualifiedRuleParser<'i> for PageRuleParser<'a, 'o, 'i> {
   type Prelude = ();
   type QualifiedRule = ();
   type Error = ParserError<'i>;
+}
+
+impl<'a, 'o, 'i> VariableDefineParser<'i> for PageRuleParser<'a, 'o, 'i> {
+  type Error = ParserError<'i>;
+  type Value = ();
+  fn parse_value_defined<'t>(
+    &mut self,
+    start: &ParserState,
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, 't>,
+  ) -> Result<Self::Value, ParseError<'i, Self::Error>> {
+    self.variables.push(parse_variable_defined(name, input, self.options)?);
+    Ok(())
+  }
 }
 
 impl<'a, 'o, 'i> RuleBodyItemParser<'i, (), ParserError<'i>> for PageRuleParser<'a, 'o, 'i> {
