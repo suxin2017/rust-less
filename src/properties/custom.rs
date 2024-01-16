@@ -267,40 +267,61 @@ pub struct BinaryExpress<'i> {
 }
 
 impl<'i> BinaryExpress<'i> {
-  fn try_parse<'t>(input: &mut Parser<'i, 't>, options: &ParserOptions<'_, 'i>) -> Result<Self, ()> {
-    return input.try_parse(|input| {
-      let left = TokenList::parser_token_or_value(input, options, 0, true, true, true);
-      if let Some(Ok((left, ..))) = left {
-        if matches!(
-          left,
-          TokenOrValue::Token(Token::Dimension { .. })
-            | TokenOrValue::VariableExpress(..)
-            | TokenOrValue::BinaryExpress(..)
-        ) {
-          return input.try_parse(|input| {
-            if let Ok(op @ &cssparser::Token::Delim('+' | '-' | '*' | '/')) = input.next() {
-              let op = Token::from(op);
-              let right = TokenList::parser_token_or_value(input, options, 0, true, true, true);
-              if let Some(Ok((right, ..))) = right {
-                if matches!(
-                  right,
-                  TokenOrValue::Token(Token::Dimension { .. })
-                    | TokenOrValue::VariableExpress(..)
-                    | TokenOrValue::BinaryExpress(..)
-                ) {
-                  return Ok(BinaryExpress {
-                    op,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                  });
-                }
-              }
-            }
-            Err(())
-          });
-        };
+  fn try_parse_factor<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+  ) -> Result<TokenOrValue<'i>, ()> {
+    match input.next() {
+      token @ Ok(cssparser::Token::Number { .. }) => {
+        if let Ok(token) = token {
+          dbg!(token);
+          return Ok(TokenOrValue::Token(token.into()));
+        }
+        return Err(());
       }
-      return Err(());
+      _ => todo!(),
+      Err(..) => return Err(()),
+    }
+  }
+  fn try_parse_term<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+  ) -> Result<TokenOrValue<'i>, ()> {
+    if let Ok(node) = input.try_parse(|input| match input.next().map_err(|_| ())? {
+      let node = Self::try_parse_factor(input, options);
+      cssparser::Token::Delim('*') => {
+        return Ok::<TokenOrValue<'_>, ()>(TokenOrValue::BinaryExpress(BinaryExpress {
+          op: Token::Delim('*'),
+          left: Box::new(TokenOrValue::),
+          right: Box::new(Self::try_parse_factor(input, options)?),
+        }));
+      }
+      _ => todo!(),
+    }) {
+      return Ok(node);
+    }
+    Err(())
+
+  }
+  fn try_parse<'t>(input: &mut Parser<'i, 't>, options: &ParserOptions<'_, 'i>) -> Result<TokenOrValue<'i>, ()> {
+    return input.try_parse(|input| {
+      let mut node = Self::try_parse_term(input, options)?;
+      match input.next() {
+        token @ Ok(cssparser::Token::Delim(..)) => match token {
+          Ok(cssparser::Token::Delim('+')) => {
+            node = TokenOrValue::BinaryExpress(BinaryExpress {
+              op: Token::Delim('+'),
+              left: Box::new(node),
+              right: Box::new(Self::try_parse_term(input, options)?),
+            });
+          }
+          _ => {}
+        },
+        _ => todo!(),
+        Err(..) => return Err(()),
+      }
+
+      return Ok(node);
     });
   }
 }
@@ -553,7 +574,7 @@ impl<'i> TokenList<'i> {
     let mut last_is_whitespace = false;
     loop {
       if let Ok(express) = BinaryExpress::try_parse(input, options) {
-        tokens.push(TokenOrValue::BinaryExpress(express));
+        tokens.push(express);
       }
       if let Some(result) =
         Self::parser_token_or_value(input, options, depth, is_variable, last_is_delim, last_is_whitespace)
