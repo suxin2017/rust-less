@@ -142,10 +142,6 @@ macro_rules! define_length_units {
               _ => return Err(location.new_unexpected_token_error(token.clone())),
             })
           },
-          Token::Number { value, .. } => {
-            // TODO: quirks mode only?
-            Ok(LengthValue::Px(value))
-          }
           ref token => return Err(location.new_unexpected_token_error(token.clone())),
         }
       }

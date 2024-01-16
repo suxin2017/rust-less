@@ -1,17 +1,18 @@
 //! Error types.
 
+use crate::bundler::BundleErrorKind::ParserError as OtherParserError;
+use crate::error::ParserError::BinaryExpressInvalid;
 use crate::properties::custom::Token;
 use crate::rules::Location;
-#[cfg(feature = "into_owned")]
-use static_self::IntoOwned;
 use crate::values::string::CowArcStr;
 use cssparser::{BasicParseErrorKind, ParseError, ParseErrorKind};
 use parcel_selectors::parser::SelectorParseErrorKind;
 #[cfg(any(feature = "serde", feature = "nodejs"))]
 use serde::Serialize;
+#[cfg(feature = "into_owned")]
+use static_self::IntoOwned;
 use std::fmt;
 use std::fmt::write;
-use crate::bundler::BundleErrorKind::ParserError as OtherParserError;
 
 /// An error with a source location.
 #[derive(Debug, PartialEq, Clone)]
@@ -106,8 +107,12 @@ pub enum ParserError<'i> {
   UnexpectedToken(#[cfg_attr(any(feature = "serde", feature = "nodejs"), serde(skip))] Token<'i>),
   /// Maximum nesting depth was reached.
   MaximumNestingDepth,
-  /// VariableDefinedInvalid
+  /// A variable defined was invalid
   VariableDefinedInvalid,
+  /// A binary express was invalid
+  BinaryExpressInvalid,
+  /// A parenthesis block express was invalid
+  ParenthesisBlockExpressInvalid,
 }
 
 impl<'i> fmt::Display for ParserError<'i> {
@@ -136,7 +141,9 @@ impl<'i> fmt::Display for ParserError<'i> {
       ),
       UnexpectedToken(token) => write!(f, "Unexpected token {:?}", token),
       MaximumNestingDepth => write!(f, "Overflowed the maximum nesting depth"),
-      VariableDefinedInvalid => write!(f,"Invalid variable defined"),
+      VariableDefinedInvalid => write!(f, "Invalid variable defined"),
+      BinaryExpressInvalid => write!(f, "Invalid binary express invalid"),
+      ParenthesisBlockExpressInvalid => write!(f, "Invalid parenthesis block express invalid"),
     }
   }
 }
@@ -151,7 +158,7 @@ impl<'i> Error<ParserError<'i>> {
         BasicParseErrorKind::AtRuleInvalid(a) => ParserError::AtRuleInvalid(a.into()),
         BasicParseErrorKind::AtRuleBodyInvalid => ParserError::AtRuleBodyInvalid,
         BasicParseErrorKind::QualifiedRuleInvalid => ParserError::QualifiedRuleInvalid,
-        BasicParseErrorKind::VariableDefinedInvalid => ParserError::VariableDefinedInvalid
+        BasicParseErrorKind::VariableDefinedInvalid => ParserError::VariableDefinedInvalid,
       },
       ParseErrorKind::Custom(c) => c,
     };
