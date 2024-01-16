@@ -3,7 +3,7 @@
 node_modules/
 target/
 pkg/
-dist/
+docs/
 .parcel-cache
 node/*.flow
 artifacts
