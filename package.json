@@ -87,7 +87,7 @@
     "wasm:build": "cargo build --target wasm32-unknown-unknown -p lightningcss_node && wasm-opt target/wasm32-unknown-unknown/debug/lightningcss_node.wasm --asyncify --pass-arg=asyncify-imports@env.await_promise_sync -Oz -o wasm/lightningcss_node.wasm && node scripts/build-wasm.js",
     "wasm:build-release": "cargo build --target wasm32-unknown-unknown -p lightningcss_node --release && wasm-opt target/wasm32-unknown-unknown/release/lightningcss_node.wasm --asyncify --pass-arg=asyncify-imports@env.await_promise_sync -Oz -o wasm/lightningcss_node.wasm && node scripts/build-wasm.js",
     "website:start": "parcel 'website/*.html' website/playground/index.html",
-    "website:build": "yarn wasm:build-release &&  rm -rf ./docs && parcel build 'website/*.html' website/playground/index.html --public-url ./rust-less  --dist-dir ./docs",
+    "website:build": "yarn wasm:build-release &&  rm -rf ./docs && parcel build 'website/*.html' website/playground/index.html --public-url ./ --dist-dir ./docs",
     "build-ast": "cargo run --example schema --features jsonschema && node scripts/build-ast.js",
     "tsc": "tsc -p node/tsconfig.json",
     "test": "uvu node/test"
