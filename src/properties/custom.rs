@@ -25,10 +25,14 @@ use crate::values::url::Url;
 use crate::visitor::Visit;
 use cssparser::color::parse_hash_color;
 use cssparser::*;
+use itertools::Itertools;
+use parcel_selectors::parser::LocalName;
+use parcel_selectors::SelectorImpl;
 use std::fmt::Write;
 
 #[cfg(feature = "serde")]
 use crate::serialization::ValueWrapper;
+use crate::values::calc::Calc;
 
 /// A CSS custom property, representing any unknown property.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,74 +245,155 @@ pub enum TokenOrValue<'i> {
   Resolution(Resolution),
   /// A dashed ident.
   DashedIdent(DashedIdent<'i>),
+  #[cfg_attr(feature = "visitor", skip_visit)]
   /// express
   BinaryExpress(BinaryExpress<'i>),
-  /// variable
-  VariableExpress(Token<'i>),
+  #[cfg_attr(feature = "visitor", skip_visit)]
   /// Block
   Block(Block<'i>),
+  #[cfg_attr(feature = "visitor", skip_visit)]
+  /// A variable express like `@a`
+  #[cfg_attr(feature = "serde", serde(borrow))]
+  VariableExpress(Token<'i>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "visitor", derive(Visit), visit(visit_token, TOKENS), visit_types(TOKENS | COLORS | URLS | VARIABLES | ENVIRONMENT_VARIABLES | FUNCTIONS | LENGTHS | ANGLES | TIMES | RESOLUTIONS | DASHED_IDENTS))]
 #[cfg_attr(feature = "into_owned", derive(static_self::IntoOwned))]
 #[cfg_attr(
   feature = "serde",
   derive(serde::Serialize, serde::Deserialize),
   serde(rename_all = "kebab-case")
 )]
+#[cfg_attr(feature = "visitor", derive(Visit))]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
-pub struct BinaryExpress<'i> {
-  /// A token.
+pub enum BinaryExpress<'i> {
+  // /// A token.
   #[cfg_attr(feature = "serde", serde(borrow))]
-  op: Token<'i>,
-  left: Box<TokenOrValue<'i>>,
-  right: Box<TokenOrValue<'i>>,
+  Value(Token<'i>),
+  #[cfg_attr(feature = "visitor", skip_type)]
+  Sum(Box<BinaryExpress<'i>>, Box<BinaryExpress<'i>>),
+  #[cfg_attr(feature = "visitor", skip_type)]
+  Mul(Box<BinaryExpress<'i>>, Box<BinaryExpress<'i>>),
+  #[cfg_attr(feature = "visitor", skip_type)]
+  Minus(Box<BinaryExpress<'i>>, Box<BinaryExpress<'i>>),
+  #[cfg_attr(feature = "visitor", skip_type)]
+  Div(Box<BinaryExpress<'i>>, Box<BinaryExpress<'i>>),
+  #[cfg_attr(feature = "visitor", skip_type)]
+  ParenthesisBlockExpress(Box<BinaryExpress<'i>>),
 }
 
 impl<'i> BinaryExpress<'i> {
-  fn try_parse<'t>(input: &mut Parser<'i, 't>, options: &ParserOptions<'_, 'i>) -> Result<Self, ()> {
-    return input.try_parse(|input| {
-      let left = TokenList::parser_token_or_value(input, options, 0, true, true, true);
-      if let Some(Ok((left, ..))) = left {
-        if matches!(
-          left,
-          TokenOrValue::Token(Token::Dimension { .. })
-            | TokenOrValue::VariableExpress(..)
-            | TokenOrValue::BinaryExpress(..)
-        ) {
-          return input.try_parse(|input| {
-            if let Ok(op @ &cssparser::Token::Delim('+' | '-' | '*' | '/')) = input.next() {
-              let op = Token::from(op);
-              let right = TokenList::parser_token_or_value(input, options, 0, true, true, true);
-              if let Some(Ok((right, ..))) = right {
-                if matches!(
-                  right,
-                  TokenOrValue::Token(Token::Dimension { .. })
-                    | TokenOrValue::VariableExpress(..)
-                    | TokenOrValue::BinaryExpress(..)
-                ) {
-                  return Ok(BinaryExpress {
-                    op,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                  });
-                }
-              }
-            }
-            Err(())
-          });
-        };
+  fn try_parse_factor<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+  ) -> Result<BinaryExpress<'i>, ParseError<'i, ParserError<'i>>> {
+    let state = input.state();
+    match input.next() {
+      token @ Ok(cssparser::Token::Number { .. }) | token @ Ok(cssparser::Token::Dimension { .. }) => {
+        return Ok(BinaryExpress::Value(token.unwrap().into()));
       }
-      return Err(());
-    });
+      token @ Ok(cssparser::Token::ParenthesisBlock) => {
+        if let Ok(parenthesis_express) =
+          input.try_parse(|input| input.parse_nested_block(|input| Self::try_parse(input, options)))
+        {
+          return Ok(BinaryExpress::ParenthesisBlockExpress(Box::new(parenthesis_express)));
+        }
+        input.reset(&state);
+        return Err(input.new_custom_error(ParserError::BinaryExpressInvalid));
+      }
+      _ => {
+        input.reset(&state);
+        return Err(input.new_custom_error(ParserError::BinaryExpressInvalid));
+      }
+    }
+  }
+  fn try_parse_term<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+  ) -> Result<BinaryExpress<'i>, ParseError<'i, ParserError<'i>>> {
+    let mut cur = Self::try_parse_factor(input, options)?;
+
+    loop {
+      let state = input.state();
+      match input.next() {
+        Ok(&cssparser::Token::Delim('*')) => {
+          if let Ok(factor) = Self::try_parse_factor(input, options) {
+            cur = BinaryExpress::Mul(Box::new(cur), Box::new(factor));
+          } else {
+            input.reset(&state);
+            break;
+          }
+        }
+        Ok(&cssparser::Token::Delim('/')) => {
+          if let Ok(factor) = Self::try_parse_factor(input, options) {
+            cur = BinaryExpress::Div(Box::new(cur), Box::new(factor));
+          } else {
+            input.reset(&state);
+            break;
+          }
+        }
+        _ => {
+          input.reset(&state);
+          break;
+        }
+      }
+    }
+    return Ok(cur);
+  }
+  fn try_parse<'t>(
+    input: &mut Parser<'i, 't>,
+    options: &ParserOptions<'_, 'i>,
+  ) -> Result<BinaryExpress<'i>, ParseError<'i, ParserError<'i>>> {
+    let mut cur = Self::try_parse_term(input, options)?;
+
+    loop {
+      let state = input.state();
+      match input.next() {
+        Ok(&cssparser::Token::Delim('+')) => {
+          if let Ok(term) = Self::try_parse_term(input, options) {
+            cur = BinaryExpress::Sum(Box::new(cur), Box::new(term));
+          } else {
+            input.reset(&state);
+            break;
+          }
+        }
+        Ok(&cssparser::Token::Delim('-')) => {
+          if let Ok(term) = Self::try_parse_term(input, options) {
+            cur = BinaryExpress::Minus(Box::new(cur), Box::new(term));
+          } else {
+            input.reset(&state);
+            break;
+          }
+        }
+        Ok(&cssparser::Token::Number { has_sign, value, .. }) => {
+          if has_sign {
+            input.reset(&state);
+            let state = input.state();
+            if let Ok(term) = Self::try_parse_term(input, options) {
+              cur = BinaryExpress::Sum(Box::new(cur), Box::new(term));
+            } else {
+              input.reset(&state);
+              break;
+            }
+          } else {
+            input.reset(&state);
+            break;
+          }
+        }
+        _ => {
+          input.reset(&state);
+          break;
+        }
+      }
+    }
+    return Ok(cur);
   }
 }
 
 #[derive(Debug)]
 struct InterpretValue<'a> {
   value: f32,
-  unit: CowArcStr<'a>,
+  unit: Option<CowArcStr<'a>>,
 }
 
 impl<'i> BinaryExpress<'i> {
@@ -316,55 +401,59 @@ impl<'i> BinaryExpress<'i> {
   where
     W: std::fmt::Write,
   {
-    let left = self.left.interpret(dest)?;
-    let right = self.right.interpret(dest)?;
-    match self.op {
-      Token::Delim('+') => {
+    match self {
+      BinaryExpress::Value(token) => match token {
+        Token::Number { value, .. } => {
+          return Ok(InterpretValue {
+            value: *value,
+            unit: None,
+          })
+        }
+        Token::Dimension { value, unit, .. } => {
+          return Ok(InterpretValue {
+            value: *value,
+            unit: Some(unit.clone()),
+          })
+        }
+        _ => unreachable!(),
+      },
+      BinaryExpress::Sum(a, b) => {
+        let left = a.interpret(dest)?;
+        let right = b.interpret(dest)?;
         return Ok(InterpretValue {
           value: left.value + right.value,
-          unit: left.unit,
+          unit: left.unit.or(right.unit).or(None),
         });
       }
-      Token::Delim('-') => {}
-      Token::Delim('*') => {}
-      Token::Delim('/') => {}
-      _ => unreachable!(),
-    }
-
-    Err(())
-  }
-}
-
-impl<'i> TokenOrValue<'i> {
-  fn interpret<'t, W>(&self, dest: &mut Printer<W>) -> Result<InterpretValue<'i>, ()>
-  where
-    W: std::fmt::Write,
-  {
-    match self {
-      TokenOrValue::Token(Token::Dimension {
-        has_sign,
-        value,
-        int_value,
-        unit,
-      }) => {
+      BinaryExpress::Minus(a, b) => {
+        let left = a.interpret(dest)?;
+        let right = b.interpret(dest)?;
         return Ok(InterpretValue {
-          value: *value,
-          unit: unit.clone(),
+          value: left.value - right.value,
+          unit: left.unit.or(right.unit).or(None),
         });
       }
-      //TODO
-      // TokenOrValue::VariableExpress(Token::AtKeyword(val)) => {
-      //     if let Some(context) = dest.context() {
-      //         if let Some(val) = context.variables.map(|variable| variable.get(val)).flatten() {
-      //
-      //         }
-      //
-      //
-      //     }
-      // }
+      BinaryExpress::Mul(a, b) => {
+        let left = a.interpret(dest)?;
+        let right = b.interpret(dest)?;
+        return Ok(InterpretValue {
+          value: left.value * right.value,
+          unit: left.unit.or(right.unit).or(None),
+        });
+      }
+      BinaryExpress::Div(a, b) => {
+        let left = a.interpret(dest)?;
+        let right = b.interpret(dest)?;
+        return Ok(InterpretValue {
+          value: left.value / right.value,
+          unit: left.unit.or(right.unit).or(None),
+        });
+      }
+      BinaryExpress::ParenthesisBlockExpress(express) => {
+        return express.interpret(dest);
+      }
       _ => unreachable!(),
     }
-    Err(())
   }
 }
 
@@ -375,15 +464,17 @@ impl<'a> ToCss for BinaryExpress<'a> {
     W: std::fmt::Write,
   {
     if let Ok(result) = self.interpret(dest) {
-      dbg!(&result);
-      dest.write_fmt(format_args!("{}{}", result.value, result.unit))?;
+      if let Some(unit) = result.unit {
+        dest.write_fmt(format_args!("{}{}", result.value, unit))?;
+      } else {
+        dest.write_fmt(format_args!("{}", result.value))?;
+      }
     }
     Ok(())
   }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "visitor", derive(Visit), visit(visit_token, TOKENS), visit_types(TOKENS | COLORS | URLS | VARIABLES | ENVIRONMENT_VARIABLES | FUNCTIONS | LENGTHS | ANGLES | TIMES | RESOLUTIONS | DASHED_IDENTS))]
 #[cfg_attr(feature = "into_owned", derive(static_self::IntoOwned))]
 #[cfg_attr(
   feature = "serde",
@@ -391,6 +482,7 @@ impl<'a> ToCss for BinaryExpress<'a> {
   serde(rename_all = "kebab-case")
 )]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "visitor", derive(Visit))]
 pub struct Block<'i> {
   /// A token.
   #[cfg_attr(feature = "serde", serde(borrow))]
@@ -554,10 +646,9 @@ impl<'i> TokenList<'i> {
     loop {
       if let Ok(express) = BinaryExpress::try_parse(input, options) {
         tokens.push(TokenOrValue::BinaryExpress(express));
+        last_is_delim = true;
       }
-      if let Some(result) =
-        Self::parser_token_or_value(input, options, depth, is_variable, last_is_delim, last_is_whitespace)
-      {
+      if let Some(result) = Self::parser_token_or_value(input, options, depth, is_variable, last_is_delim) {
         match result {
           Ok(result) => {
             let token = result.0;
@@ -590,7 +681,6 @@ impl<'i> TokenList<'i> {
     depth: usize,
     is_variable: bool,
     last_is_delim: bool,
-    is_in_express: bool,
   ) -> Option<Result<(TokenOrValue<'i>, bool, bool), ParseError<'i, ParserError<'i>>>> {
     loop {
       let state = input.state();
@@ -704,9 +794,7 @@ impl<'i> TokenList<'i> {
             return Some(Ok((TokenOrValue::VariableExpress(token.into()), false, false)));
           }
           token @ cssparser::Token::Dimension { .. } => {
-            let value = if is_in_express {
-              TokenOrValue::Token(token.into())
-            } else if let Ok(length) = LengthValue::try_from(token) {
+            let value = if let Ok(length) = LengthValue::try_from(token) {
               TokenOrValue::Length(length)
             } else if let Ok(angle) = Angle::try_from(token) {
               TokenOrValue::Angle(angle)
@@ -828,8 +916,34 @@ impl<'i> TokenList<'i> {
           false
         }
         TokenOrValue::BinaryExpress(binary_express) => {
-          dbg!(&binary_express);
           binary_express.to_css(dest)?;
+          false
+        }
+        TokenOrValue::Block(block) => {
+          block.token_list.to_css(dest, false)?;
+          false
+        }
+        TokenOrValue::VariableExpress(Token::AtKeyword(variable_express)) => {
+          if let Some(ctx) = context {
+            let mut current_context = ctx;
+            loop {
+              if let Some(vs) = current_context.variables {
+                if let Some(token_list) = vs.iter().rfind(|&x| x.name == variable_express) {
+                  token_list.value.to_css(dest, false)?;
+                  break;
+                } else if let Some(parent) = current_context.parent {
+                  current_context = parent;
+                } else {
+                  // todo: throw error
+                  // variable defined don't find
+                  break;
+                }
+              } else {
+                break;
+              }
+            }
+          }
+
           false
         }
         TokenOrValue::Token(token) => match token {
@@ -860,16 +974,7 @@ impl<'i> TokenList<'i> {
             value.to_css(dest)?;
             false
           }
-          Token::AtKeyword(value) => {
-            // if let Some(ctx) = context {
-            //     if let Some(vs) = ctx.variables {
-            //         if let Some(token_list) = vs.get(value) {
-            //             token_list.value.to_css(dest, false);
-            //         }
-            //     }
-            // }
-            false
-          }
+
           _ => {
             token.to_css(dest)?;
             matches!(token, Token::WhiteSpace(..))

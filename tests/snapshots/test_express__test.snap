@@ -1,0 +1,23 @@
+---
+source: tests/test_express.rs
+expression: res.code
+---
+a {
+  width: 1px;
+  width: 3;
+  width: 7;
+  width: 11;
+  width: 5.5;
+  width: 9;
+  wdith: 54.22222;
+  width: 2;
+  width: 6;
+  width: 18;
+  width: 35;
+  width: -21;
+  width: 4.8;
+  width: 0.071428575;
+  width: 0.75;
+  width: 4;
+}
+

@@ -114,9 +114,9 @@ impl<'i> AtRuleParser<'i> for CustomAtRuleParser {
         CustomAtRuleBodyType::RuleList => {
           Some(AtRuleBody::RuleList(CssRuleList::parse_with(input, options, self)?))
         }
-        CustomAtRuleBodyType::StyleBlock => Some(AtRuleBody::RuleList(CssRuleList::parse_style_block_with(
-          input, options, self, is_nested,
-        )?)),
+        CustomAtRuleBodyType::StyleBlock => Some(AtRuleBody::RuleList(
+          CssRuleList::parse_style_block_with(input, options, self, is_nested)?.0,
+        )),
       }
     } else {
       return Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid));
