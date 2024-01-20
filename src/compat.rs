@@ -137,7 +137,6 @@ pub enum Feature {
   MongolianListStyleType,
   MyanmarListStyleType,
   Namespaces,
-  Nesting,
   NotSelectorList,
   NthChildOf,
   OctalListStyleType,
@@ -1354,36 +1353,6 @@ impl Feature {
           }
         }
         if browsers.ie.is_some() {
-          return false;
-        }
-      }
-      Feature::Nesting => {
-        if let Some(version) = browsers.firefox {
-          if version < 7667712 {
-            return false;
-          }
-        }
-        if let Some(version) = browsers.chrome {
-          if version < 7864320 {
-            return false;
-          }
-        }
-        if let Some(version) = browsers.safari {
-          if version < 1114624 {
-            return false;
-          }
-        }
-        if let Some(version) = browsers.ios_saf {
-          if version < 1114624 {
-            return false;
-          }
-        }
-        if browsers.android.is_some()
-          || browsers.edge.is_some()
-          || browsers.ie.is_some()
-          || browsers.opera.is_some()
-          || browsers.samsung.is_some()
-        {
           return false;
         }
       }

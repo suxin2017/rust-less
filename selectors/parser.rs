@@ -349,7 +349,7 @@ pub trait Parser<'i> {
   }
 
   fn is_nesting_allowed(&self) -> bool {
-    false
+    true
   }
 
   fn deep_combinator_enabled(&self) -> bool {
@@ -403,7 +403,7 @@ pub enum ParseErrorRecovery {
   IgnoreInvalidSelector,
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum NestingRequirement {
   None,
   Prefixed,
@@ -708,7 +708,7 @@ pub fn namespace_empty_string<'i, Impl: SelectorImpl<'i>>() -> Impl::NamespaceUr
 /// This reordering doesn't change the semantics of selector matching, and we
 /// handle it in to_css to make it invisible to serialization.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Selector<'i, Impl: SelectorImpl<'i>>(SpecificityAndFlags, Vec<Component<'i, Impl>>);
+pub struct Selector<'i, Impl: SelectorImpl<'i>>(pub SpecificityAndFlags, pub Vec<Component<'i, Impl>>);
 
 #[cfg(feature = "into_owned")]
 impl<'any, 'i, Impl: SelectorImpl<'i>, NewSel> static_self::IntoOwned<'any> for Selector<'i, Impl>
@@ -752,6 +752,11 @@ impl<'i, Impl: SelectorImpl<'i>> Selector<'i, Impl> {
       .iter()
       .position(|c| matches!(*c, Component::Combinator(..) | Component::PseudoElement(..)))
       .unwrap_or(self.1.len());
+    self.1.insert(index, component);
+  }
+
+  #[inline]
+  pub fn insert(&mut self, index: usize, component: Component<'i, Impl>) {
     self.1.insert(index, component);
   }
 
@@ -2695,6 +2700,7 @@ where
   input.skip_whitespace();
 
   let mut empty = true;
+  dbg!(parser.is_nesting_allowed());
   if parser.is_nesting_allowed() && input.try_parse(|input| input.expect_delim('&')).is_ok() {
     state.insert(SelectorParsingState::AFTER_NESTING);
     builder.push_simple_selector(Component::Nesting);
@@ -3436,6 +3442,44 @@ pub mod tests {
       NestingRequirement::None,
     );
     assert!(list.is_ok());
+  }
+
+  #[test]
+  fn test_nest() {
+    let mut input = ParserInput::new("c + a[foo=\"bar\"] c:hover + b");
+    let list = SelectorList::parse_relative(
+      &DummyParser::default(),
+      &mut CssParser::new(&mut input),
+      ParseErrorRecovery::DiscardList,
+      NestingRequirement::Implicit,
+    );
+    // let mut s = String::new();
+    // list.unwrap().to_css(&mut s);
+    // dbg!(s);
+    let mut v = vec![];
+    let b = list.unwrap();
+    b.0.iter().for_each(|s| {
+      let mut si = s.1.iter().rev();
+      'out: loop {
+        let mut m = vec![];
+        'inner: loop {
+          if let Some(a) = si.next() {
+            if matches!(a, Component::Combinator(_)) {
+              m.reverse();
+              v.append(&mut m);
+              v.push(a);
+              break 'inner;
+            }
+            m.push(a);
+          } else {
+            m.reverse();
+            v.append(&mut m);
+            break 'out;
+          }
+        }
+      }
+    });
+    dbg!(v);
   }
 
   const MATHML: &str = "http://www.w3.org/1998/Math/MathML";
