@@ -1288,6 +1288,33 @@ impl<'a, 'i> ToCss for Selector<'i> {
   }
 }
 
+fn serialize_selectors_inner<'a, 'i, W>(
+  dest: &mut Printer<W>,
+  context: Option<&StyleContext>,
+  skip_nest: bool,
+) -> Result<(), PrinterError>
+where
+  W: fmt::Write,
+{
+  use parcel_selectors::parser::*;
+  let parent_selector_context = dest.get_selector_context();
+  if let Some(selectList) = parent_selector_context {
+    let mut first = true;
+    for selector in selectList {
+      if !first {
+        dest.delim(',', false)?;
+        dest.newline()?;
+      }
+      first = false;
+      for component in selector.1.iter() {
+        serialize_component(component, dest, context)?;
+      }
+    }
+  }
+
+  Ok(())
+}
+
 fn serialize_selector<'a, 'i, W>(
   selector: &Selector<'i>,
   dest: &mut Printer<W>,
@@ -1297,7 +1324,8 @@ fn serialize_selector<'a, 'i, W>(
 where
   W: fmt::Write,
 {
-  use parcel_selectors::parser::*;
+  serialize_selectors_inner(dest, context, false)?;
+
   // Compound selectors invert the order of their contents, so we need to
   // undo that during serialization.
   //
@@ -1309,149 +1337,272 @@ where
   // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
   // which we need for |split|. So we split by combinators on a match-order
   // sequence and then reverse.
-
-  let mut combinators = selector.iter_raw_match_order().rev().filter_map(|x| x.as_combinator());
-  let compound_selectors = selector.iter_raw_match_order().as_slice().split(|x| x.is_combinator()).rev();
-  let should_compile_nesting = should_compile!(dest.targets, Nesting);
-
-  let mut first = true;
-  let mut combinators_exhausted = false;
-  for mut compound in compound_selectors {
-    debug_assert!(!combinators_exhausted);
-
-    // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
-    if is_relative && matches!(compound.get(0), Some(Component::Scope)) {
-      if let Some(combinator) = combinators.next() {
-        combinator.to_css(dest)?;
-      }
-      compound = &compound[1..];
-      is_relative = false;
-    }
-
-    // https://drafts.csswg.org/cssom/#serializing-selectors
-    if compound.is_empty() {
-      continue;
-    }
-
-    let has_leading_nesting = first && matches!(compound[0], Component::Nesting);
-    let first_index = if has_leading_nesting { 1 } else { 0 };
-    first = false;
-
-    // 1. If there is only one simple selector in the compound selectors
-    //    which is a universal selector, append the result of
-    //    serializing the universal selector to s.
-    //
-    // Check if `!compound.empty()` first--this can happen if we have
-    // something like `... > ::before`, because we store `>` and `::`
-    // both as combinators internally.
-    //
-    // If we are in this case, after we have serialized the universal
-    // selector, we skip Step 2 and continue with the algorithm.
-    let (can_elide_namespace, first_non_namespace) = match compound.get(first_index) {
-      Some(Component::ExplicitAnyNamespace)
-      | Some(Component::ExplicitNoNamespace)
-      | Some(Component::Namespace(..)) => (false, first_index + 1),
-      Some(Component::DefaultNamespace(..)) => (true, first_index + 1),
-      _ => (true, first_index),
-    };
-    let mut perform_step_2 = true;
-    let next_combinator = combinators.next();
-    if first_non_namespace == compound.len() - 1 {
-      match (next_combinator, &compound[first_non_namespace]) {
-        // We have to be careful here, because if there is a
-        // pseudo element "combinator" there isn't really just
-        // the one simple selector. Technically this compound
-        // selector contains the pseudo element selector as well
-        // -- Combinator::PseudoElement, just like
-        // Combinator::SlotAssignment, don't exist in the
-        // spec.
-        (Some(Combinator::PseudoElement), _) | (Some(Combinator::SlotAssignment), _) => (),
-        (_, &Component::ExplicitUniversalType) => {
-          // Iterate over everything so we serialize the namespace
-          // too.
-          let mut iter = compound.iter();
-          let swap_nesting = has_leading_nesting && should_compile_nesting;
-          if swap_nesting {
-            // Swap nesting and type selector (e.g. &div -> div&).
-            iter.next();
-          }
-
-          for simple in iter {
-            serialize_component(simple, dest, context)?;
-          }
-
-          if swap_nesting {
-            serialize_nesting(dest, context, false)?;
-          }
-
-          // Skip step 2, which is an "otherwise".
-          perform_step_2 = false;
-        }
-        _ => (),
-      }
-    }
-
-    // 2. Otherwise, for each simple selector in the compound selectors
-    //    that is not a universal selector of which the namespace prefix
-    //    maps to a namespace that is not the default namespace
-    //    serialize the simple selector and append the result to s.
-    //
-    // See https://github.com/w3c/csswg-drafts/issues/1606, which is
-    // proposing to change this to match up with the behavior asserted
-    // in cssom/serialize-namespaced-type-selectors.html, which the
-    // following code tries to match.
-    if perform_step_2 {
-      let mut iter = compound.iter();
-      if has_leading_nesting && should_compile_nesting && is_type_selector(compound.get(first_non_namespace)) {
-        // Swap nesting and type selector (e.g. &div -> div&).
-        // This ensures that the compiled selector is valid. e.g. (div.foo is valid, .foodiv is not).
-        let nesting = iter.next().unwrap();
-        let local = iter.next().unwrap();
-        serialize_component(local, dest, context)?;
-
-        // Also check the next item in case of namespaces.
-        if first_non_namespace > first_index {
-          let local = iter.next().unwrap();
-          serialize_component(local, dest, context)?;
-        }
-
-        serialize_component(nesting, dest, context)?;
-      } else if has_leading_nesting && should_compile_nesting {
-        // Nesting selector may serialize differently if it is leading, due to type selectors.
-        iter.next();
-        serialize_nesting(dest, context, true)?;
-      }
-
-      for simple in iter {
-        if let Component::ExplicitUniversalType = *simple {
-          // Can't have a namespace followed by a pseudo-element
-          // selector followed by a universal selector in the same
-          // compound selector, so we don't have to worry about the
-          // real namespace being in a different `compound`.
-          if can_elide_namespace {
-            continue;
-          }
-        }
-        serialize_component(simple, dest, context)?;
-      }
-    }
-
-    // 3. If this is not the last part of the chain of the selector
-    //    append a single SPACE (U+0020), followed by the combinator
-    //    ">", "+", "~", ">>", "||", as appropriate, followed by another
-    //    single SPACE (U+0020) if the combinator was not whitespace, to
-    //    s.
-    match next_combinator {
-      Some(c) => c.to_css(dest)?,
-      None => combinators_exhausted = true,
-    };
-
-    // 4. If this is the last part of the chain of the selector and
-    //    there is a pseudo-element, append "::" followed by the name of
-    //    the pseudo-element, to s.
-    //
-    // (we handle this above)
-  }
+  // let components = selector.1.iter().rev();
+  // let mut is_after_nest = false;
+  // for component in components {
+  //   dbg!(component);
+  //   let mut is_combinator_selector = false;
+  //   print_component!(*component);
+  //   match *component {
+  //     Component::Combinator(_) => {
+  //       dbg!("Combinator", component);
+  //       is_combinator_selector = true;
+  //       // serialize_component(component, dest, context)?;
+  //       continue;
+  //     }
+  //     Component::ExplicitAnyNamespace => {
+  //       dbg!("ExplicitAnyNamespace", component);
+  //     }
+  //     Component::ExplicitNoNamespace => {
+  //       dbg!("ExplicitNoNamespace", component);
+  //     }
+  //     Component::DefaultNamespace(_) => {
+  //       dbg!("DefaultNamespace", component);
+  //     }
+  //     Component::Namespace(_, _) => {
+  //       dbg!("Namespace", component);
+  //     }
+  //     Component::ExplicitUniversalType => {
+  //       dbg!("ExplicitUniversalType", component);
+  //     }
+  //     Component::LocalName(_) => {
+  //       dbg!("LocalName", component);
+  //     }
+  //     Component::ID(_) => {
+  //       dbg!("ID", component);
+  //     }
+  //     Component::Class(_) => {
+  //       dbg!("Class", component);
+  //     }
+  //     Component::AttributeInNoNamespaceExists { .. } => {
+  //       dbg!("AttributeInNoNamespaceExists", component);
+  //     }
+  //     Component::AttributeInNoNamespace { .. } => {
+  //       dbg!("AttributeInNoNamespace", component);
+  //     }
+  //     Component::AttributeOther(_) => {
+  //       dbg!("AttributeOther", component);
+  //     }
+  //     Component::Negation(_) => {
+  //       dbg!("Negation", component);
+  //     }
+  //     Component::Root => {
+  //       dbg!("Root", component);
+  //     }
+  //     Component::Empty => {
+  //       dbg!("Empty", component);
+  //     }
+  //     Component::Scope => {
+  //       dbg!("Scope", component);
+  //     }
+  //     Component::Nth(_) => {
+  //       dbg!("Nth", component);
+  //     }
+  //     Component::NthOf(_) => {
+  //       dbg!("NthOf", component);
+  //     }
+  //     Component::NonTSPseudoClass(_) => {
+  //       dbg!("NonTSPseudoClass", component);
+  //     }
+  //     Component::Slotted(_) => {
+  //       dbg!("Slotted", component);
+  //     }
+  //     Component::Part(_) => {
+  //       dbg!("Part", component);
+  //     }
+  //     Component::Host(_) => {
+  //       dbg!("Host", component);
+  //     }
+  //     Component::Where(_) => {
+  //       dbg!("Where", component);
+  //     }
+  //     Component::Is(_) => {
+  //       dbg!("Is", component);
+  //     }
+  //     Component::Any(_, _) => {
+  //       dbg!("Any", component);
+  //     }
+  //     Component::Has(_) => {
+  //       dbg!("Has", component);
+  //     }
+  //     Component::PseudoElement(_) => {
+  //       dbg!("PseudoElement", component);
+  //     }
+  //     Component::Nesting => {
+  //       dbg!("Nesting", component);
+  //     }
+  //   }
+  //   if let Component::Nesting = *component {
+  //     is_after_nest = true;
+  //     continue;
+  //   }
+  //   if is_after_nest {
+  //     if let Some(selectors) = dest.get_selector_context() {
+  //       let mut first = true;
+  //       dbg!(&selectors);
+  //       for parent_selector_list in selectors {
+  //         if !first {
+  //           dest.delim(',', false)?;
+  //           dest.newline()?;
+  //         }
+  //         first = false;
+  //         for parent_selector in parent_selector_list {
+  //           if !is_combinator_selector {
+  //             for parent_component in parent_selector.iter() {
+  //               if !matches!(component, Component::Nesting) {
+  //                 serialize_component(parent_component, dest, context)?;
+  //               }
+  //             }
+  //             dest.whitespace()?;
+  //           }
+  //         }
+  //         serialize_component(component, dest, context)?;
+  //       }
+  //     }
+  //   } else {
+  //     serialize_component(component, dest, context)?;
+  //   }
+  // }
+  // let mut combinators = selector.iter_raw_match_order().rev().filter_map(|x| x.as_combinator());
+  // let compound_selectors = selector.iter_raw_match_order().as_slice().split(|x| x.is_combinator()).rev();
+  // let mut first = true;
+  // let mut combinators_exhausted = false;
+  // for mut compound in compound_selectors {
+  //   debug_assert!(!combinators_exhausted);
+  //
+  //   // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
+  //   if is_relative && matches!(compound.get(0), Some(Component::Scope)) {
+  //     if let Some(combinator) = combinators.next() {
+  //       combinator.to_css(dest)?;
+  //     }
+  //     compound = &compound[1..];
+  //     is_relative = false;
+  //   }
+  //
+  //   // https://drafts.csswg.org/cssom/#serializing-selectors
+  //   if compound.is_empty() {
+  //     continue;
+  //   }
+  //
+  //   let has_leading_nesting = first && matches!(compound[0], Component::Nesting);
+  //   let first_index = if has_leading_nesting { 1 } else { 0 };
+  //   first = false;
+  //
+  //   // 1. If there is only one simple selector in the compound selectors
+  //   //    which is a universal selector, append the result of
+  //   //    serializing the universal selector to s.
+  //   //
+  //   // Check if `!compound.empty()` first--this can happen if we have
+  //   // something like `... > ::before`, because we store `>` and `::`
+  //   // both as combinators internally.
+  //   //
+  //   // If we are in this case, after we have serialized the universal
+  //   // selector, we skip Step 2 and continue with the algorithm.
+  //   let (can_elide_namespace, first_non_namespace) = match compound.get(first_index) {
+  //     Some(Component::ExplicitAnyNamespace)
+  //     | Some(Component::ExplicitNoNamespace)
+  //     | Some(Component::Namespace(..)) => (false, first_index + 1),
+  //     Some(Component::DefaultNamespace(..)) => (true, first_index + 1),
+  //     _ => (true, first_index),
+  //   };
+  //   let mut perform_step_2 = true;
+  //   let next_combinator = combinators.next();
+  //   if first_non_namespace == compound.len() - 1 {
+  //     match (next_combinator, &compound[first_non_namespace]) {
+  //       // We have to be careful here, because if there is a
+  //       // pseudo element "combinator" there isn't really just
+  //       // the one simple selector. Technically this compound
+  //       // selector contains the pseudo element selector as well
+  //       // -- Combinator::PseudoElement, just like
+  //       // Combinator::SlotAssignment, don't exist in the
+  //       // spec.
+  //       (Some(Combinator::PseudoElement), _) | (Some(Combinator::SlotAssignment), _) => (),
+  //       (_, &Component::ExplicitUniversalType) => {
+  //         // Iterate over everything so we serialize the namespace
+  //         // too.
+  //         let mut iter = compound.iter();
+  //         let swap_nesting = has_leading_nesting;
+  //         if swap_nesting {
+  //           // Swap nesting and type selector (e.g. &div -> div&).
+  //           iter.next();
+  //         }
+  //
+  //         for simple in iter {
+  //           serialize_component(simple, dest, context)?;
+  //         }
+  //
+  //         if swap_nesting {
+  //           serialize_nesting(dest, context, false)?;
+  //         }
+  //
+  //         // Skip step 2, which is an "otherwise".
+  //         perform_step_2 = false;
+  //       }
+  //       _ => (),
+  //     }
+  //   }
+  //
+  //   // 2. Otherwise, for each simple selector in the compound selectors
+  //   //    that is not a universal selector of which the namespace prefix
+  //   //    maps to a namespace that is not the default namespace
+  //   //    serialize the simple selector and append the result to s.
+  //   //
+  //   // See https://github.com/w3c/csswg-drafts/issues/1606, which is
+  //   // proposing to change this to match up with the behavior asserted
+  //   // in cssom/serialize-namespaced-type-selectors.html, which the
+  //   // following code tries to match.
+  //   if perform_step_2 {
+  //     let mut iter = compound.iter();
+  //     if has_leading_nesting && is_type_selector(compound.get(first_non_namespace)) {
+  //       // Swap nesting and type selector (e.g. &div -> div&).
+  //       // This ensures that the compiled selector is valid. e.g. (div.foo is valid, .foodiv is not).
+  //       let nesting = iter.next().unwrap();
+  //       let local = iter.next().unwrap();
+  //       serialize_component(local, dest, context)?;
+  //
+  //       // Also check the next item in case of namespaces.
+  //       if first_non_namespace > first_index {
+  //         let local = iter.next().unwrap();
+  //         serialize_component(local, dest, context)?;
+  //       }
+  //
+  //       serialize_component(nesting, dest, context)?;
+  //     } else if has_leading_nesting {
+  //       // Nesting selector may serialize differently if it is leading, due to type selectors.
+  //       iter.next();
+  //       serialize_nesting(dest, context, true)?;
+  //     }
+  //
+  //     for simple in iter {
+  //       if let Component::ExplicitUniversalType = *simple {
+  //         // Can't have a namespace followed by a pseudo-element
+  //         // selector followed by a universal selector in the same
+  //         // compound selector, so we don't have to worry about the
+  //         // real namespace being in a different `compound`.
+  //         if can_elide_namespace {
+  //           continue;
+  //         }
+  //       }
+  //       serialize_component(simple, dest, context)?;
+  //     }
+  //   }
+  //
+  //   // 3. If this is not the last part of the chain of the selector
+  //   //    append a single SPACE (U+0020), followed by the combinator
+  //   //    ">", "+", "~", ">>", "||", as appropriate, followed by another
+  //   //    single SPACE (U+0020) if the combinator was not whitespace, to
+  //   //    s.
+  //   match next_combinator {
+  //     Some(c) => c.to_css(dest)?,
+  //     None => combinators_exhausted = true,
+  //   };
+  //
+  //   // 4. If this is the last part of the chain of the selector and
+  //   //    there is a pseudo-element, append "::" followed by the name of
+  //   //    the pseudo-element, to s.
+  //   //
+  //   // (we handle this above)
+  // }
 
   Ok(())
 }
@@ -1597,15 +1748,14 @@ fn serialize_nesting<W>(
 where
   W: fmt::Write,
 {
-  if let Some(ctx) = context {
+  dbg!(dest.get_selector_context());
+  if let Some(ctx) = context.map(|c| c.parent).flatten() {
     if let Some(selectors) = ctx.selectors {
       // If there's only one simple selector, just serialize it directly.
       // Otherwise, use an :is() pseudo class.
       // Type selectors are only allowed at the start of a compound selector,
       // so use :is() if that is not the case.
-      if selectors.0.len() == 1
-        && (first || (!has_type_selector(&selectors.0[0]) && is_simple(&selectors.0[0])))
-      {
+      if selectors.0.len() == 1 && (first || (!has_type_selector(&selectors.0[0]) && is_simple(&selectors.0[0]))) {
         serialize_selector(selectors.0.first().unwrap(), dest, ctx.parent, false)
       } else {
         dest.write_str(":is(")?;
@@ -1615,20 +1765,12 @@ where
     } else {
       // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
       // Otherwise, if nesting is supported, serialize the nesting selector directly.
-      if should_compile!(dest.targets, Nesting) {
-        dest.write_str(":scope")
-      } else {
-        dest.write_char('&')
-      }
+      dest.write_str(":scope")
     }
   } else {
     // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
     // Otherwise, if nesting is supported, serialize the nesting selector directly.
-    if should_compile!(dest.targets, Nesting) {
-      dest.write_str(":scope")
-    } else {
-      dest.write_char('&')
-    }
+    dest.write_str(":scope")
   }
 }
 
@@ -1677,14 +1819,8 @@ where
   I: Iterator<Item = &'a Selector<'i>>,
   W: fmt::Write,
 {
-  let mut first = true;
-  for selector in iter {
-    if !first {
-      dest.delim(',', false)?;
-    }
-    first = false;
-    serialize_selector(selector, dest, context, is_relative)?;
-  }
+  serialize_selectors_inner(dest, context, is_relative)?;
+
   Ok(())
 }
 

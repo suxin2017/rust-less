@@ -205,27 +205,29 @@ impl<'a, 'i, T: ToCss> ToCss for StyleRule<'i, T> {
   where
     W: std::fmt::Write,
   {
-    return dest.with_context(None, Some(&self.variables), |dest| {
-      if self.vendor_prefix.is_empty() {
-        self.to_css_base(dest)
-      } else {
-        let mut first_rule = true;
-        for prefix in self.vendor_prefix {
-          if first_rule {
-            first_rule = false;
-          } else {
-            if !dest.minify {
-              dest.write_char('\n')?; // no indent
+    return dest.with_selector_context(Some(&self.selectors), |dest| {
+      dest.with_context(None, Some(&self.variables), |dest| {
+        if self.vendor_prefix.is_empty() {
+          self.to_css_base(dest)
+        } else {
+          let mut first_rule = true;
+          for prefix in self.vendor_prefix {
+            if first_rule {
+              first_rule = false;
+            } else {
+              if !dest.minify {
+                dest.write_char('\n')?; // no indent
+              }
+              dest.newline()?;
             }
-            dest.newline()?;
+            dest.vendor_prefix = prefix;
+            self.to_css_base(dest)?;
           }
-          dest.vendor_prefix = prefix;
-          self.to_css_base(dest)?;
-        }
 
-        dest.vendor_prefix = VendorPrefix::empty();
-        Ok(())
-      }
+          dest.vendor_prefix = VendorPrefix::empty();
+          Ok(())
+        }
+      })
     });
   }
 }
@@ -236,7 +238,7 @@ impl<'a, 'i, T: ToCss> StyleRule<'i, T> {
     W: std::fmt::Write,
   {
     // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
-    let supports_nesting = self.rules.0.is_empty() || !should_compile!(dest.targets, Nesting);
+    let supports_nesting = self.rules.0.is_empty();
     let len = self.declarations.declarations.len() + self.declarations.important_declarations.len();
     let has_declarations = supports_nesting || len > 0 || self.rules.0.is_empty();
 
@@ -304,6 +306,7 @@ impl<'a, 'i, T: ToCss> StyleRule<'i, T> {
     }
 
     // Write nested rules after the parent.
+    // less default support nesting
     if supports_nesting {
       newline!();
       self.rules.to_css(dest)?;
@@ -311,8 +314,7 @@ impl<'a, 'i, T: ToCss> StyleRule<'i, T> {
     } else {
       end!();
       newline!();
-
-      dest.with_context(Some(&self.selectors), None, |dest| self.rules.to_css(dest))?;
+      self.rules.to_css(dest)?;
     }
 
     Ok(())

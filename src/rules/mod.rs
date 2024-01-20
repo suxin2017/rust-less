@@ -403,7 +403,10 @@ impl<'i, T> CssRule<'i, T> {
   ) -> Result<Self, ParseError<'i, ParserError<'i>>> {
     let mut rules = CssRuleList(Vec::new());
     let mut variable = vec![];
-    parse_one_rule(input, &mut TopLevelRuleParser::new(options, at_rule_parser, &mut rules,&mut variable))?;
+    parse_one_rule(
+      input,
+      &mut TopLevelRuleParser::new(options, at_rule_parser, &mut rules, &mut variable),
+    )?;
     Ok(rules.0.pop().unwrap())
   }
 
@@ -443,7 +446,7 @@ impl<'i> CssRuleList<'i, DefaultAtRule> {
     input: &mut Parser<'i, 't>,
     options: &ParserOptions<'_, 'i>,
     is_nested: bool,
-  ) -> Result<(Self,Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
+  ) -> Result<(Self, Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
     Self::parse_style_block_with(input, options, &mut DefaultAtRuleParser, is_nested)
   }
 }
@@ -465,7 +468,7 @@ impl<'i, T> CssRuleList<'i, T> {
     options: &ParserOptions<'_, 'i>,
     at_rule_parser: &mut P,
     is_nested: bool,
-  ) -> Result<(Self,Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
+  ) -> Result<(Self, Vec<VariableDefined<'i>>), ParseError<'i, ParserError<'i>>> {
     parse_style_block(input, options, at_rule_parser, is_nested)
   }
 }

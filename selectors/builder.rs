@@ -189,7 +189,7 @@ fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
 bitflags! {
     /// Flags that indicate at which point of parsing a selector are we.
     #[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Hash)]
-    pub (crate) struct SelectorFlags : u8 {
+    pub  struct SelectorFlags : u8 {
         const HAS_PSEUDO = 1 << 0;
         const HAS_SLOTTED = 1 << 1;
         const HAS_PART = 1 << 2;
@@ -200,9 +200,9 @@ bitflags! {
 pub struct SpecificityAndFlags {
   /// There are two free bits here, since we use ten bits for each specificity
   /// kind (id, class, element).
-  pub(crate) specificity: u32,
+  pub specificity: u32,
   /// There's padding after this field due to the size of the flags.
-  pub(crate) flags: SelectorFlags,
+  pub flags: SelectorFlags,
 }
 
 impl SpecificityAndFlags {
